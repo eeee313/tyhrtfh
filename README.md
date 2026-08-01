@@ -26,10 +26,11 @@ description, bot nickname) between two saved profiles: **RoValues** and
 | `!values` | admin | Switches this server to **RoValues** (✅ confirm first) |
 | `!jaces` | admin | Switches this server to **Jaces MM Services** (✅ confirm first), then auto-posts: middleman panel → `mm-req`, auto-crypto panel → `auto-crypto`, ToS/rules messages → `tos-crypto` and `mm-tos`, "Join 🛒" button → `🛒`, invite links → `servers` |
 | `+embed <text>` | admin | Deletes your message and reposts the text as an embed |
+| `+say <text>` | admin | Deletes your message and reposts the text as plain text (no embed) |
 | `!middleman` | admin | Manually (re)posts the Middleman Service panel — button always shows "Failed" |
 | `!auto` | admin | Manually (re)posts the Jace's Auto Middleman panel (boxed layout matching the reference screenshot) — buttons always show "Failed" |
 | `!send` | admin | Posts one random fake "Trade Completed" transaction on demand |
-| `!stats` | anyone | Posts a random fake rank/volume card into `#commands` |
+| `!stats` | anyone | Posts a fake rank/volume card into `#commands`, attributed to a **random member** (see below) |
 
 ## How switching works
 
@@ -49,12 +50,24 @@ amount, fake transaction ID, `Anonymous`/`Anonymous`) into any channel named
 `completed-crypto`. Adjust the channel name or interval in `config.js` under
 `autopost`. `!send` posts one on demand, same format.
 
+## !stats random member pool
+
+`config.stats.randomPoolId` is tried in this order: a **role** with that ID
+(picks a random member who has it) → a **specific member** with that ID →
+any non-bot member in the server. This needs the **Server Members Intent**
+enabled for the bot in the Discord Developer Portal (Bot tab) — without it,
+member fetching silently fails and `!stats` falls back to whoever ran the
+command.
+
 ## Jaces MM Services channel layout
 
 `Social` now includes `chat`, `commands`, and `🛒` alongside the existing
 categories. `#commands` is where `!stats` posts its cards; `#🛒` gets a
 "Join 🛒" button linking to `config.profiles.jaces.autoPost.shop.inviteUrl`
-(currently `discord.gg/jacemarket`).
+(currently `discord.gg/jacemarket`). That button now targets an exact
+**channel ID**, not a name match — the RoValues profile also has a channel
+called `🛒〢sell-your-items`, and matching by name alone could post the
+join button there instead of the intended `🛒` channel.
 
 ## If the description still doesn't update
 

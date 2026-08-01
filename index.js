@@ -24,6 +24,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildMembers, // needed to pick a random member for !stats
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -182,6 +183,18 @@ function findChannel(guild, match) {
   );
 }
 
+// Prefer an exact channel ID (avoids substring collisions, e.g. '🛒' matching
+// both the actual 🛒 channel AND '🛒〢sell-your-items' from the other profile).
+// Falls back to name-substring matching if no ID is given or it's not found.
+function resolveChannel(guild, spec) {
+  if (spec.channelId) {
+    const byId = guild.channels.cache.get(spec.channelId);
+    if (byId) return byId;
+  }
+  if (spec.channelMatch) return findChannel(guild, spec.channelMatch);
+  return null;
+}
+
 async function runJacesAutoPost(guild) {
   const cfg = config.profiles.jaces.autoPost;
   if (!cfg) return;
@@ -198,7 +211,7 @@ async function runJacesAutoPost(guild) {
   const mmTosChannel = findChannel(guild, cfg.mmTos.channelMatch);
   if (mmTosChannel) await postMessages(mmTosChannel, config.mmTosMessages, config.tosUrl);
 
-  const shopChannel = findChannel(guild, cfg.shop.channelMatch);
+  const shopChannel = resolveChannel(guild, cfg.shop);
   if (shopChannel) {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel(cfg.shop.buttonLabel).setStyle(ButtonStyle.Link).setURL(cfg.shop.inviteUrl)
@@ -362,6 +375,26 @@ async function postStats(channel, user) {
   await channel.send({ embeds: [embed] }).catch((e) => console.error('postStats failed:', e.message));
 }
 
+async function getStatsPool(guild) {
+  const id = config.stats.randomPoolId;
+
+  try {
+    await guild.members.fetch();
+  } catch (e) {
+    console.error('members.fetch failed (check Server Members Intent is enabled):', e.message);
+  }
+
+  if (id) {
+    const role = guild.roles.cache.get(id);
+    if (role && role.members.size > 0) return [...role.members.values()];
+
+    const member = guild.members.cache.get(id);
+    if (member) return [member];
+  }
+
+  return [...guild.members.cache.values()].filter((m) => !m.user.bot);
+}
+
 function randomBetween(min, max, decimals) {
   const val = Math.random() * (max - min) + min;
   return val.toFixed(decimals);
@@ -466,13 +499,31 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (lower.startsWith('+say')) {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    const text = raw.slice('+say'.length).trim();
+    if (!text) {
+      await message.reply('Usage: `+say <text>`').catch(() => {});
+      return;
+    }
+    await message.channel.send(text).catch(() => {});
+    await message.delete().catch(() => {});
+    return;
+  }
+
   if (lower === '!stats') {
     const target = findChannel(message.guild, config.stats.postChannelMatch);
     if (!target) {
       await message.reply("Couldn't find a #commands channel to post stats in.").catch(() => {});
       return;
     }
-    await postStats(target, message.author);
+    const pool = await getStatsPool(message.guild);
+    const member = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+    const user = member ? member.user : message.author;
+    await postStats(target, user);
     return;
   }
 });

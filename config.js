@@ -36,7 +36,7 @@ module.exports = {
       key: 'jaces',
       guildName: 'Jaces MM Services',
       icon: 'jaces',
-      botName: 'Auto Middleman BOT',
+      botName: 'Jaces MM Service',
       botIcon: 'autoMiddleman',
       description: 'https://jaces.xyz/',
       categories: [
@@ -73,7 +73,8 @@ module.exports = {
         tosCrypto: { channelMatch: 'tos-crypto' },
         mmTos: { channelMatch: 'mm-tos' },
         shop: {
-          channelMatch: '🛒',
+          channelId: '1533260656801878196', // explicit ID — avoids matching '🛒〢sell-your-items' from the other profile
+          channelMatch: '🛒', // fallback only, used if the ID isn't found
           inviteUrl: 'https://discord.gg/jacemarket',
           buttonLabel: 'Join 🛒',
         },
@@ -165,9 +166,11 @@ module.exports = {
     },
   ],
 
-  // !stats — fake rank/volume card, posted to #commands
+  // !stats — fake rank/volume card for a random member, posted to #commands
   stats: {
     postChannelMatch: 'commands',
+    // Tried in order: members with this role → this specific member → any non-bot member.
+    randomPoolId: '1526273333811876071',
     emoji: '💎',
     ranks: [
       { name: 'Quartz', threshold: 0 },
