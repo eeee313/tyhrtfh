@@ -9,6 +9,11 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ContainerBuilder,
+  SectionBuilder,
+  TextDisplayBuilder,
+  SeparatorBuilder,
+  MessageFlags,
 } = require('discord.js');
 const config = require('./config');
 const assetData = require('./assets-data');
@@ -187,6 +192,20 @@ async function runJacesAutoPost(guild) {
   const autoChannel = findChannel(guild, cfg.autoCrypto.channelMatch);
   if (autoChannel) await postAutoCryptoPanel(autoChannel);
 
+  const tosCryptoChannel = findChannel(guild, cfg.tosCrypto.channelMatch);
+  if (tosCryptoChannel) await postMessages(tosCryptoChannel, config.tosCryptoMessages, config.tosUrl);
+
+  const mmTosChannel = findChannel(guild, cfg.mmTos.channelMatch);
+  if (mmTosChannel) await postMessages(mmTosChannel, config.mmTosMessages, config.tosUrl);
+
+  const shopChannel = findChannel(guild, cfg.shop.channelMatch);
+  if (shopChannel) {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel(cfg.shop.buttonLabel).setStyle(ButtonStyle.Link).setURL(cfg.shop.inviteUrl)
+    );
+    await shopChannel.send({ components: [row] }).catch(() => {});
+  }
+
   const serversChannel = findChannel(guild, cfg.serverLinks.channelMatch);
   if (serversChannel) {
     const text = `${cfg.serverLinks.links.join('\n')}\n\n${cfg.serverLinks.note}`;
@@ -242,33 +261,105 @@ async function postMiddlemanPanel(channel) {
 async function postAutoCryptoPanel(channel) {
   const d = config.displays.autoCrypto;
   const feesText = d.fees.map((f) => `• ${f}`).join('\n');
-  const requestsText = d.requests
-    .map((r) => (r.note ? `**${r.label}**\n${r.note}` : `**${r.label}**`))
-    .join('\n\n');
 
-  const embed = new EmbedBuilder()
-    .setTitle(d.title)
-    .setDescription(`${d.description}\n\n**Fees:**\n${feesText}\n\n${requestsText}`)
-    .setColor(d.color)
-    .setFooter({ text: `Biggest Trade: #${d.footerChannel} · ${d.footerAmount}` });
+  const infoContainer = new ContainerBuilder().setAccentColor(0x5865f2);
 
-  const rows = [];
   if (d.tutorialUrl) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel('Tutorial').setStyle(ButtonStyle.Link).setURL(d.tutorialUrl)
-      )
+    infoContainer.addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${d.title}**`))
+        .setButtonAccessory(
+          new ButtonBuilder().setLabel('Tutorial').setStyle(ButtonStyle.Link).setURL(d.tutorialUrl)
+        )
     );
+  } else {
+    infoContainer.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${d.title}**`));
   }
-  rows.push(
-    new ActionRowBuilder().addComponents(
-      d.requests.map((r) =>
-        new ButtonBuilder().setCustomId(r.customId).setLabel(r.buttonLabel).setStyle(ButtonStyle.Success)
-      )
-    )
+
+  infoContainer
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(d.description))
+    .addSeparatorComponents(new SeparatorBuilder())
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**Fees:**\n${feesText}`));
+
+  const requestContainers = d.requests.map((r) => {
+    const accent = r.style === 'success' ? 0x57f287 : 0x5865f2;
+    const text = r.note ? `**${r.label}**\n${r.note}` : `**${r.label}**`;
+    return new ContainerBuilder()
+      .setAccentColor(accent)
+      .addSectionComponents(
+        new SectionBuilder()
+          .addTextDisplayComponents(new TextDisplayBuilder().setContent(text))
+          .setButtonAccessory(
+            new ButtonBuilder()
+              .setCustomId(r.customId)
+              .setLabel(r.buttonLabel)
+              .setStyle(r.style === 'success' ? ButtonStyle.Success : ButtonStyle.Primary)
+          )
+      );
+  });
+
+  const footer = new TextDisplayBuilder().setContent(
+    `-# Biggest Trade: #${d.footerChannel} · ${d.footerAmount}`
   );
 
-  await channel.send({ embeds: [embed], components: rows }).catch((e) => console.error('postAutoCryptoPanel failed:', e.message));
+  await channel
+    .send({
+      flags: MessageFlags.IsComponentsV2,
+      components: [infoContainer, ...requestContainers, footer],
+    })
+    .catch((e) => console.error('postAutoCryptoPanel failed:', e.message));
+}
+
+// Posts a sequence of plain content (+ optional link button) messages, in order.
+async function postMessages(channel, messages, fallbackUrl) {
+  for (const m of messages) {
+    const payload = { content: m.content };
+    if (m.button) {
+      payload.components = [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setLabel(m.button.label)
+            .setStyle(ButtonStyle.Link)
+            .setURL(m.button.url || fallbackUrl)
+        ),
+      ];
+    }
+    await channel.send(payload).catch(() => {});
+  }
+}
+
+function rankFor(volume, ranks) {
+  let current = ranks[0];
+  let next = null;
+  for (let i = 0; i < ranks.length; i++) {
+    if (volume >= ranks[i].threshold) {
+      current = ranks[i];
+      next = ranks[i + 1] || null;
+    }
+  }
+  return { current, next };
+}
+
+async function postStats(channel, user) {
+  const s = config.stats;
+  const deals = Math.floor(Math.random() * (s.dealsMax - s.dealsMin + 1)) + s.dealsMin;
+  const volume = Math.random() * (s.volumeMax - s.volumeMin) + s.volumeMin;
+  const { current, next } = rankFor(volume, s.ranks);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setAuthor({ name: user.username, iconURL: user.displayAvatarURL() })
+    .addFields(
+      { name: 'Current Rank', value: `${s.emoji} ${current.name} ($${current.threshold.toLocaleString()})` },
+      {
+        name: 'Next Rank',
+        value: next ? `${s.emoji} ${next.name} ($${next.threshold.toLocaleString()})` : 'Max Rank',
+      },
+      { name: 'Deals Completed', value: `${deals}`, inline: true },
+      { name: 'Total USD Volume', value: `$${volume.toFixed(2)}`, inline: true }
+    );
+
+  await channel.send({ embeds: [embed] }).catch((e) => console.error('postStats failed:', e.message));
 }
 
 function randomBetween(min, max, decimals) {
@@ -372,6 +463,16 @@ client.on('messageCreate', async (message) => {
       return;
     }
     await postFakeTrade(message.channel);
+    return;
+  }
+
+  if (lower === '!stats') {
+    const target = findChannel(message.guild, config.stats.postChannelMatch);
+    if (!target) {
+      await message.reply("Couldn't find a #commands channel to post stats in.").catch(() => {});
+      return;
+    }
+    await postStats(target, message.author);
     return;
   }
 });

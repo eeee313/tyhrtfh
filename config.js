@@ -64,12 +64,19 @@ module.exports = {
         {
           name: 'Social',
           locked: true,
-          channels: ['chat'],
+          channels: ['chat', 'commands', '🛒'],
         },
       ],
       autoPost: {
         middleman: { channelMatch: 'mm-req' },
         autoCrypto: { channelMatch: 'auto-crypto' },
+        tosCrypto: { channelMatch: 'tos-crypto' },
+        mmTos: { channelMatch: 'mm-tos' },
+        shop: {
+          channelMatch: '🛒',
+          inviteUrl: 'https://discord.gg/jacemarket',
+          buttonLabel: 'Join 🛒',
+        },
         serverLinks: {
           channelMatch: 'servers',
           links: ['https://discord.gg/8ueB68BGqn', 'https://discord.gg/fQbPUNvCFx'],
@@ -114,15 +121,65 @@ module.exports = {
           note: null,
           buttonLabel: 'Request LTC',
           customId: 'request_ltc',
+          style: 'primary',
         },
         {
           label: 'Request USDT [BEP-20]',
           note: 'Network: BSC (BEP-20)',
           buttonLabel: 'Request USDT [BEP-20]',
           customId: 'request_usdt',
+          style: 'success',
         },
       ],
     },
+  },
+
+  // Standalone ToS/rules messages, auto-posted into their channels on !jaces.
+  // "button" reuses tosUrl below unless it sets its own url.
+  tosUrl: 'https://jaces.xyz/tos', // update to the real ToS link if different
+  tosCryptoMessages: [
+    {
+      content:
+        'The ToS in #mm-tos also apply here.\nYou can start a trade with the Automatic MM Bot here: #auto-crypto',
+      button: { label: 'View ToS' },
+    },
+    {
+      content:
+        "• Double-check your Middleman's roles, as traders can impersonate the MM.\n" +
+        '• Beware of fake SAB games.\n' +
+        '• Always record your trades (e.g. giving items in-game).\n' +
+        "• Always read the bot's embeds, people can send a few cents to the bot and lie that they sent the full amount.",
+    },
+  ],
+  mmTosMessages: [
+    {
+      content: 'Get a Manual Middleman here from -> #mm-req',
+      button: { label: 'View ToS' },
+    },
+    {
+      content:
+        'There has been an increase in scam attempts recently.\n' +
+        "• Double-check your Middleman's roles, as traders can impersonate the MM.\n" +
+        '• Beware of fake SAB games.\n' +
+        '• Always record your trades (e.g. giving items in-game).',
+    },
+  ],
+
+  // !stats — fake rank/volume card, posted to #commands
+  stats: {
+    postChannelMatch: 'commands',
+    emoji: '💎',
+    ranks: [
+      { name: 'Quartz', threshold: 0 },
+      { name: 'Topaz', threshold: 1000 },
+      { name: 'Sapphire', threshold: 10000 },
+      { name: 'Emerald', threshold: 50000 },
+      { name: 'Diamond', threshold: 100000 },
+    ],
+    dealsMin: 1,
+    dealsMax: 300,
+    volumeMin: 100,
+    volumeMax: 50000,
   },
 
   autopost: {
