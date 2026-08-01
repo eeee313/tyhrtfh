@@ -30,7 +30,7 @@ const SWITCH_PREFIXES = {
 // Custom IDs of every "for display only" button — always report failure.
 const DISPLAY_ONLY_BUTTON_IDS = [
   config.displays.middleman.buttonCustomId,
-  ...config.displays.autoCrypto.buttons.map((b) => b.customId),
+  ...config.displays.autoCrypto.requests.map((r) => r.customId),
 ];
 
 function isAdmin(message) {
@@ -59,7 +59,6 @@ function lockedOverwrites(guild) {
 
 async function wipeGuildChannels(guild) {
   const channels = [...guild.channels.cache.values()];
-  // delete text/voice channels first, then categories, to avoid orphan errors
   for (const ch of channels.filter((c) => c.type !== ChannelType.GuildCategory)) {
     await ch.delete('Server profile switch').catch(() => {});
   }
@@ -87,24 +86,58 @@ async function buildProfile(guild, profile) {
   }
 }
 
-async function applyBranding(guild, profile) {
+async function applyBranding(guild, profile, notifyUser) {
   await guild
     .setName(profile.guildName)
     .catch((e) => console.error('setName failed:', e.message));
 
   if (profile.icon) {
-    await guild.setIcon(profile.icon).catch((e) => console.error('setIcon failed:', e.message));
+    await guild.setIcon(profile.icon).catch(async (e) => {
+      console.error('setIcon failed:', e.message);
+      await notify(
+        notifyUser,
+        `⚠️ Couldn't set the server icon (${e.message}). Make sure \`${profile.icon}\` exists in the repo you deployed.`
+      );
+    });
   }
 
-  // Description only applies to Community-enabled servers; set via guild.edit(), not a setDescription() method.
-  await guild
-    .edit({ description: profile.description })
-    .catch((e) => console.error('description update failed (needs Community feature enabled):', e.message));
+  // Guild "description" (Server Settings > Overview) requires the bot to have
+  // Manage Server, and on some guilds requires the Community feature to be enabled.
+  await guild.edit({ description: profile.description }).catch(async (e) => {
+    console.error('description update failed:', e.message);
+    await notify(
+      notifyUser,
+      `⚠️ Couldn't set the server description (${e.message}). If this server doesn't have "Community" enabled in Server Settings, Discord may block description changes — try enabling Community and running the switch again.`
+    );
+  });
 }
 
 // Status updates go to a DM, since the invoking channel gets deleted mid-switch.
 async function notify(user, text) {
   await user.send(text).catch((e) => console.error('DM to user failed:', e.message));
+}
+
+function findChannel(guild, match) {
+  return guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildText && c.name.includes(match)
+  );
+}
+
+async function runJacesAutoPost(guild) {
+  const cfg = config.profiles.jaces.autoPost;
+  if (!cfg) return;
+
+  const mmChannel = findChannel(guild, cfg.middleman.channelMatch);
+  if (mmChannel) await postMiddlemanPanel(mmChannel);
+
+  const autoChannel = findChannel(guild, cfg.autoCrypto.channelMatch);
+  if (autoChannel) await postAutoCryptoPanel(autoChannel);
+
+  const serversChannel = findChannel(guild, cfg.serverLinks.channelMatch);
+  if (serversChannel) {
+    const text = `${cfg.serverLinks.links.join('\n')}\n\n${cfg.serverLinks.note}`;
+    await serversChannel.send(text).catch(() => {});
+  }
 }
 
 async function switchProfile(message, key) {
@@ -134,7 +167,11 @@ async function switchProfile(message, key) {
 
   await wipeGuildChannels(guild);
   await buildProfile(guild, profile);
-  await applyBranding(guild, profile);
+  await applyBranding(guild, profile, author);
+
+  if (key === 'jaces') {
+    await runJacesAutoPost(guild);
+  }
 
   await notify(author, `✅ Server switched to **${profile.guildName}**.`);
 }
@@ -145,21 +182,39 @@ async function postMiddlemanPanel(channel) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(d.buttonCustomId).setLabel(d.buttonLabel).setStyle(ButtonStyle.Primary)
   );
-  await channel.send({ embeds: [embed], components: [row] });
+  await channel.send({ embeds: [embed], components: [row] }).catch((e) => console.error('postMiddlemanPanel failed:', e.message));
 }
 
 async function postAutoCryptoPanel(channel) {
   const d = config.displays.autoCrypto;
   const feesText = d.fees.map((f) => `• ${f}`).join('\n');
+  const requestsText = d.requests
+    .map((r) => (r.note ? `**${r.label}**\n${r.note}` : `**${r.label}**`))
+    .join('\n\n');
+
   const embed = new EmbedBuilder()
     .setTitle(d.title)
-    .setDescription(`${d.description}\n\n**Fees:**\n${feesText}`)
+    .setDescription(`${d.description}\n\n**Fees:**\n${feesText}\n\n${requestsText}`)
     .setColor(d.color)
     .setFooter({ text: `Biggest Trade: #${d.footerChannel} · ${d.footerAmount}` });
-  const row = new ActionRowBuilder().addComponents(
-    d.buttons.map((b) => new ButtonBuilder().setCustomId(b.customId).setLabel(b.label).setStyle(ButtonStyle.Success))
+
+  const rows = [];
+  if (d.tutorialUrl) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel('Tutorial').setStyle(ButtonStyle.Link).setURL(d.tutorialUrl)
+      )
+    );
+  }
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      d.requests.map((r) =>
+        new ButtonBuilder().setCustomId(r.customId).setLabel(r.buttonLabel).setStyle(ButtonStyle.Success)
+      )
+    )
   );
-  await channel.send({ embeds: [embed], components: [row] });
+
+  await channel.send({ embeds: [embed], components: rows }).catch((e) => console.error('postAutoCryptoPanel failed:', e.message));
 }
 
 function randomBetween(min, max, decimals) {
@@ -208,7 +263,6 @@ client.on('messageCreate', async (message) => {
   const raw = message.content.trim();
   const lower = raw.toLowerCase();
 
-  // Server profile switch
   const switchKey = SWITCH_PREFIXES[lower];
   if (switchKey) {
     if (!isAdmin(message)) {
@@ -224,7 +278,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // +embed <text> -> posts an embed with that text
   if (lower.startsWith('+embed')) {
     if (!isAdmin(message)) {
       await message.reply('You do not have permission to do that.').catch(() => {});
@@ -241,7 +294,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // !middleman -> posts the display-only middleman panel
   if (lower === '!middleman') {
     if (!isAdmin(message)) {
       await message.reply('You do not have permission to do that.').catch(() => {});
@@ -251,7 +303,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // !auto -> posts the display-only auto crypto panel
   if (lower === '!auto') {
     if (!isAdmin(message)) {
       await message.reply('You do not have permission to do that.').catch(() => {});

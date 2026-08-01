@@ -7,7 +7,7 @@ module.exports = {
     values: {
       key: 'values',
       guildName: 'RoValues',
-      icon: './assets/rovalues.png', // save the RoValues logo here
+      icon: './assets/rovalues.png',
       description:
         'RoValues is your trusted source for accurate Roblox market values. Track item prices, discover trends, and stay ahead with reliable valuations for your favorite games.',
       categories: [
@@ -32,7 +32,7 @@ module.exports = {
     jaces: {
       key: 'jaces',
       guildName: 'Jaces',
-      icon: './assets/jaces.png', // save the Jaces pfp here
+      icon: './assets/jaces.png',
       description: 'https://jaces.xyz/',
       categories: [
         {
@@ -62,6 +62,17 @@ module.exports = {
           channels: ['chat'],
         },
       ],
+      // Auto-posted right after a !jaces rebuild finishes.
+      // "match" is a substring match against the created channel's name.
+      autoPost: {
+        middleman: { channelMatch: 'mm-req' },
+        autoCrypto: { channelMatch: 'auto-crypto' },
+        serverLinks: {
+          channelMatch: 'servers',
+          links: ['https://discord.gg/8ueB68BGqn', 'https://discord.gg/fQbPUNvCFx'],
+          note: 'ALL LINKS CAN BE FOUND IN https://jaces.xyz/',
+        },
+      },
     },
   },
 
@@ -76,14 +87,14 @@ module.exports = {
       title: 'Middleman Service',
       color: 0x5865f2,
       description:
-        'To request a middleman from this server, click the blue "Request Middleman" button on this message.\n\n' +
+        '↳ To request a middleman from this server, click the blue "Request Middleman" button on this message.\n\n' +
         '__**How does middleman work?**__\n' +
-        'Example: Trade is NFR Crow for Robux.\n' +
+        '✕ Example: Trade is NFR Crow for Robux.\n' +
         '1. Seller gives NFR Crow to middleman\n' +
         '2. Buyer pays seller robux (After middleman confirms receiving pet)\n' +
         '3. Middleman gives buyer NFR Crow (After seller confirmed receiving robux)\n\n' +
         '__**NOTES:**__\n' +
-        "1. You must both agree on the deal before using a middleman. Troll tickets will have consequences.\n" +
+        '1. You must both agree on the deal before using a middleman. Troll tickets will have consequences.\n' +
         '2. Specify what you\'re trading (e.g. FR Frost Dragon in Adopt me > $20 USD LTC). Don\'t just put "adopt me" in the embed.',
       buttonLabel: 'Request Middleman',
       buttonCustomId: 'middleman_request',
@@ -91,13 +102,24 @@ module.exports = {
     autoCrypto: {
       title: "Jace's Auto Middleman",
       color: 0x5865f2,
-      description: '**Paid Service**\nRead our ToS before using the bot: #tos-crypto',
+      tutorialUrl: 'https://jaces.xyz/', // update to the real tutorial link if different
+      description: '• Paid Service\n• Read our ToS before using the bot: #tos-crypto',
       fees: ['Deals $250+: $1.50', 'Deals under $250: $0.50', 'Deals under $50 are FREE'],
       footerChannel: 'completed-crypto',
       footerAmount: '$24,468',
-      buttons: [
-        { label: 'Request Litecoin', customId: 'request_ltc' },
-        { label: 'Request USDT [BEP-20]', customId: 'request_usdt' },
+      requests: [
+        {
+          label: 'Request Litecoin',
+          note: null,
+          buttonLabel: 'Request LTC',
+          customId: 'request_ltc',
+        },
+        {
+          label: 'Request USDT [BEP-20]',
+          note: 'Network: BSC (BEP-20)',
+          buttonLabel: 'Request USDT [BEP-20]',
+          customId: 'request_usdt',
+        },
       ],
     },
   },
