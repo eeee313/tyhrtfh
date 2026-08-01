@@ -1,0 +1,13 @@
+{
+  "name": "server-profile-switcher",
+  "version": "1.0.0",
+  "description": "Discord bot that switches a server between RoValues and Jaces profiles via !values / !jaces",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
+  }
+}
