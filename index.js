@@ -11,6 +11,7 @@ const {
   ButtonStyle,
 } = require('discord.js');
 const config = require('./config');
+const assetData = require('./assets-data');
 
 const client = new Client({
   intents: [
@@ -92,12 +93,10 @@ async function applyBranding(guild, profile, notifyUser) {
     .catch((e) => console.error('setName failed:', e.message));
 
   if (profile.icon) {
-    await guild.setIcon(profile.icon).catch(async (e) => {
+    const iconData = assetData[profile.icon];
+    await guild.setIcon(iconData).catch(async (e) => {
       console.error('setIcon failed:', e.message);
-      await notify(
-        notifyUser,
-        `⚠️ Couldn't set the server icon (${e.message}). Make sure \`${profile.icon}\` exists in the repo you deployed.`
-      );
+      await notify(notifyUser, `⚠️ Couldn't set the server icon (${e.message}).`);
     });
   }
 
@@ -110,6 +109,27 @@ async function applyBranding(guild, profile, notifyUser) {
       `⚠️ Couldn't set the server description (${e.message}). If this server doesn't have "Community" enabled in Server Settings, Discord may block description changes — try enabling Community and running the switch again.`
     );
   });
+}
+
+// Changes the BOT's own username/avatar to match the profile (global to the bot,
+// not just this server — Discord also rate-limits both to ~2 changes/hour).
+async function applyBotIdentity(profile, notifyUser) {
+  if (!config.botIdentitySwitch) return;
+
+  if (profile.botName && client.user.username !== profile.botName) {
+    await client.user.setUsername(profile.botName).catch(async (e) => {
+      console.error('bot setUsername failed:', e.message);
+      await notify(notifyUser, `⚠️ Couldn't rename the bot to "${profile.botName}" (${e.message}). Discord rate-limits username changes to ~2/hour.`);
+    });
+  }
+
+  if (profile.botIcon) {
+    const iconData = assetData[profile.botIcon];
+    await client.user.setAvatar(iconData).catch(async (e) => {
+      console.error('bot setAvatar failed:', e.message);
+      await notify(notifyUser, `⚠️ Couldn't change the bot's avatar (${e.message}). Discord rate-limits avatar changes to ~2/hour.`);
+    });
+  }
 }
 
 // Status updates go to a DM, since the invoking channel gets deleted mid-switch.
@@ -168,6 +188,7 @@ async function switchProfile(message, key) {
   await wipeGuildChannels(guild);
   await buildProfile(guild, profile);
   await applyBranding(guild, profile, author);
+  await applyBotIdentity(profile, author);
 
   if (key === 'jaces') {
     await runJacesAutoPost(guild);
@@ -309,6 +330,15 @@ client.on('messageCreate', async (message) => {
       return;
     }
     await postAutoCryptoPanel(message.channel);
+    return;
+  }
+
+  if (lower === '!send') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await postFakeTrade(message.channel);
     return;
   }
 });
