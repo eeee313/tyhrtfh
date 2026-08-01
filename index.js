@@ -41,11 +41,15 @@ function isAdmin(message) {
   return false;
 }
 
-// Deny talk/react/thread perms for @everyone on a channel
-function lockedOverwrites(guild) {
+// Allow view but lock sending / threads / reactions for @everyone
+function visibleOverwrites(guild) {
   return [
     {
       id: guild.roles.everyone.id,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.ReadMessageHistory,
+      ],
       deny: [
         PermissionsBitField.Flags.SendMessages,
         PermissionsBitField.Flags.CreatePublicThreads,
@@ -53,36 +57,74 @@ function lockedOverwrites(guild) {
         PermissionsBitField.Flags.SendMessagesInThreads,
         PermissionsBitField.Flags.AddReactions,
       ],
-      allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory],
     },
   ];
 }
 
-async function wipeGuildChannels(guild) {
-  const channels = [...guild.channels.cache.values()];
-  for (const ch of channels.filter((c) => c.type !== ChannelType.GuildCategory)) {
-    await ch.delete('Server profile switch').catch(() => {});
-  }
-  for (const ch of channels.filter((c) => c.type === ChannelType.GuildCategory)) {
-    await ch.delete('Server profile switch').catch(() => {});
-  }
+// Hide from @everyone
+function hiddenOverwrites(guild) {
+  return [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionsBitField.Flags.ViewChannel],
+    },
+  ];
 }
 
-async function buildProfile(guild, profile) {
+async function syncProfile(guild, profile) {
+  const desiredCategories = new Set(profile.categories.map((c) => c.name));
+  const desiredChannels = new Set();
   for (const cat of profile.categories) {
-    const category = await guild.channels.create({
-      name: cat.name,
-      type: ChannelType.GuildCategory,
-      permissionOverwrites: cat.locked ? lockedOverwrites(guild) : undefined,
-    });
+    for (const ch of cat.channels) desiredChannels.add(ch);
+  }
+
+  // 1) Hide anything that isn't part of this profile
+  for (const ch of guild.channels.cache.values()) {
+    if (ch.type === ChannelType.GuildCategory) {
+      if (!desiredCategories.has(ch.name)) {
+        await ch.permissionOverwrites.set(hiddenOverwrites(guild)).catch(() => {});
+      }
+    } else if (ch.type === ChannelType.GuildText) {
+      if (!desiredChannels.has(ch.name)) {
+        await ch.permissionOverwrites.set(hiddenOverwrites(guild)).catch(() => {});
+      }
+    }
+  }
+
+  // 2) Create or unhide categories & channels for this profile
+  for (const cat of profile.categories) {
+    let category = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildCategory && c.name === cat.name
+    );
+
+    if (!category) {
+      category = await guild.channels.create({
+        name: cat.name,
+        type: ChannelType.GuildCategory,
+        permissionOverwrites: visibleOverwrites(guild),
+      });
+    } else {
+      await category.permissionOverwrites.set(visibleOverwrites(guild)).catch(() => {});
+    }
 
     for (const chName of cat.channels) {
-      await guild.channels.create({
-        name: chName,
-        type: ChannelType.GuildText,
-        parent: category.id,
-        permissionOverwrites: cat.locked ? lockedOverwrites(guild) : undefined,
-      });
+      let channel = guild.channels.cache.find(
+        (c) => c.type === ChannelType.GuildText && c.name === chName
+      );
+
+      if (!channel) {
+        await guild.channels.create({
+          name: chName,
+          type: ChannelType.GuildText,
+          parent: category.id,
+          permissionOverwrites: visibleOverwrites(guild),
+        });
+      } else {
+        await channel.permissionOverwrites.set(visibleOverwrites(guild)).catch(() => {});
+        if (channel.parentId !== category.id) {
+          await channel.setParent(category.id).catch(() => {});
+        }
+      }
     }
   }
 }
@@ -100,8 +142,6 @@ async function applyBranding(guild, profile, notifyUser) {
     });
   }
 
-  // Guild "description" (Server Settings > Overview) requires the bot to have
-  // Manage Server, and on some guilds requires the Community feature to be enabled.
   await guild.edit({ description: profile.description }).catch(async (e) => {
     console.error('description update failed:', e.message);
     await notify(
@@ -111,28 +151,22 @@ async function applyBranding(guild, profile, notifyUser) {
   });
 }
 
-// Changes the BOT's own username/avatar to match the profile (global to the bot,
-// not just this server — Discord also rate-limits both to ~2 changes/hour).
-async function applyBotIdentity(profile, notifyUser) {
-  if (!config.botIdentitySwitch) return;
+// Changes the BOT'S NICKNAME in this server only (autonick)
+async function applyBotNickname(guild, profile, notifyUser) {
+  if (!config.botIdentitySwitch || !profile.botName) return;
 
-  if (profile.botName && client.user.username !== profile.botName) {
-    await client.user.setUsername(profile.botName).catch(async (e) => {
-      console.error('bot setUsername failed:', e.message);
-      await notify(notifyUser, `⚠️ Couldn't rename the bot to "${profile.botName}" (${e.message}). Discord rate-limits username changes to ~2/hour.`);
-    });
+  const me = guild.members.me;
+  if (!me) {
+    console.error('guild.members.me not available');
+    return;
   }
 
-  if (profile.botIcon) {
-    const iconData = assetData[profile.botIcon];
-    await client.user.setAvatar(iconData).catch(async (e) => {
-      console.error('bot setAvatar failed:', e.message);
-      await notify(notifyUser, `⚠️ Couldn't change the bot's avatar (${e.message}). Discord rate-limits avatar changes to ~2/hour.`);
-    });
-  }
+  await me.setNickname(profile.botName).catch(async (e) => {
+    console.error('setNickname failed:', e.message);
+    await notify(notifyUser, `⚠️ Couldn't change bot nickname to "${profile.botName}" (${e.message}).`);
+  });
 }
 
-// Status updates go to a DM, since the invoking channel gets deleted mid-switch.
 async function notify(user, text) {
   await user.send(text).catch((e) => console.error('DM to user failed:', e.message));
 }
@@ -166,7 +200,7 @@ async function switchProfile(message, key) {
   const author = message.author;
 
   const confirmMsg = await message.reply(
-    `⚠️ This will **delete every channel/category** in this server and rebuild it as **${profile.guildName}**. React ✅ within 15s to confirm.`
+    `⚠️ This will **hide/show channels** to switch this server to **${profile.guildName}**. React ✅ within 15s to confirm.`
   );
   await confirmMsg.react('✅');
 
@@ -185,10 +219,9 @@ async function switchProfile(message, key) {
 
   await notify(author, `🔄 Switching this server to **${profile.guildName}**... (this may take a bit)`);
 
-  await wipeGuildChannels(guild);
-  await buildProfile(guild, profile);
+  await syncProfile(guild, profile);
   await applyBranding(guild, profile, author);
-  await applyBotIdentity(profile, author);
+  await applyBotNickname(guild, profile, author);
 
   if (key === 'jaces') {
     await runJacesAutoPost(guild);
@@ -353,7 +386,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   startAutopostLoop();
 });
