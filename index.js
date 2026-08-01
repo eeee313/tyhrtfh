@@ -5,6 +5,10 @@ const {
   Partials,
   PermissionsBitField,
   ChannelType,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } = require('discord.js');
 const config = require('./config');
 
@@ -18,10 +22,16 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-const PREFIXES = {
+const SWITCH_PREFIXES = {
   '!values': 'values',
   '!jaces': 'jaces',
 };
+
+// Custom IDs of every "for display only" button — always report failure.
+const DISPLAY_ONLY_BUTTON_IDS = [
+  config.displays.middleman.buttonCustomId,
+  ...config.displays.autoCrypto.buttons.map((b) => b.customId),
+];
 
 function isAdmin(message) {
   if (message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
@@ -78,21 +88,29 @@ async function buildProfile(guild, profile) {
 }
 
 async function applyBranding(guild, profile) {
-  await guild.setName(profile.guildName).catch((e) => console.error('setName failed:', e.message));
+  await guild
+    .setName(profile.guildName)
+    .catch((e) => console.error('setName failed:', e.message));
 
   if (profile.icon) {
     await guild.setIcon(profile.icon).catch((e) => console.error('setIcon failed:', e.message));
   }
 
-  // Guild "description" only applies to Community-enabled servers.
+  // Description only applies to Community-enabled servers; set via guild.edit(), not a setDescription() method.
   await guild
-    .setDescription(profile.description)
-    .catch((e) => console.error('setDescription failed (needs Community feature enabled):', e.message));
+    .edit({ description: profile.description })
+    .catch((e) => console.error('description update failed (needs Community feature enabled):', e.message));
+}
+
+// Status updates go to a DM, since the invoking channel gets deleted mid-switch.
+async function notify(user, text) {
+  await user.send(text).catch((e) => console.error('DM to user failed:', e.message));
 }
 
 async function switchProfile(message, key) {
   const profile = config.profiles[key];
   const guild = message.guild;
+  const author = message.author;
 
   const confirmMsg = await message.reply(
     `⚠️ This will **delete every channel/category** in this server and rebuild it as **${profile.guildName}**. React ✅ within 15s to confirm.`
@@ -101,48 +119,162 @@ async function switchProfile(message, key) {
 
   const collected = await confirmMsg
     .awaitReactions({
-      filter: (reaction, user) => reaction.emoji.name === '✅' && user.id === message.author.id,
+      filter: (reaction, user) => reaction.emoji.name === '✅' && user.id === author.id,
       max: 1,
       time: 15000,
     })
     .catch(() => null);
 
   if (!collected || collected.size === 0) {
-    await message.channel.send('❌ Switch cancelled (no confirmation).');
+    await confirmMsg.edit('❌ Switch cancelled (no confirmation).').catch(() => {});
     return;
   }
 
-  const status = await message.channel.send(`🔄 Switching to **${profile.guildName}**...`);
+  await notify(author, `🔄 Switching this server to **${profile.guildName}**... (this may take a bit)`);
 
   await wipeGuildChannels(guild);
   await buildProfile(guild, profile);
   await applyBranding(guild, profile);
 
-  await status.edit(`✅ Server switched to **${profile.guildName}**.`);
+  await notify(author, `✅ Server switched to **${profile.guildName}**.`);
+}
+
+async function postMiddlemanPanel(channel) {
+  const d = config.displays.middleman;
+  const embed = new EmbedBuilder().setTitle(d.title).setDescription(d.description).setColor(d.color);
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(d.buttonCustomId).setLabel(d.buttonLabel).setStyle(ButtonStyle.Primary)
+  );
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
+async function postAutoCryptoPanel(channel) {
+  const d = config.displays.autoCrypto;
+  const feesText = d.fees.map((f) => `• ${f}`).join('\n');
+  const embed = new EmbedBuilder()
+    .setTitle(d.title)
+    .setDescription(`${d.description}\n\n**Fees:**\n${feesText}`)
+    .setColor(d.color)
+    .setFooter({ text: `Biggest Trade: #${d.footerChannel} · ${d.footerAmount}` });
+  const row = new ActionRowBuilder().addComponents(
+    d.buttons.map((b) => new ButtonBuilder().setCustomId(b.customId).setLabel(b.label).setStyle(ButtonStyle.Success))
+  );
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
+function randomBetween(min, max, decimals) {
+  const val = Math.random() * (max - min) + min;
+  return val.toFixed(decimals);
+}
+
+function fakeTxId() {
+  const hex = () =>
+    Array.from({ length: 9 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `${hex()}...${hex()}`;
+}
+
+async function postFakeTrade(channel) {
+  const currency = config.autopost.currencies[Math.floor(Math.random() * config.autopost.currencies.length)];
+  const amount = randomBetween(currency.min, currency.max, 8);
+  const usd = randomBetween(currency.usdMin, currency.usdMax, 2);
+
+  const embed = new EmbedBuilder()
+    .setTitle('Trade Completed')
+    .setColor(0x57f287)
+    .addFields(
+      { name: `${currency.icon} ${amount} ${currency.symbol} ($${usd} USD)`, value: '\u200b' },
+      { name: 'Sender', value: 'Anonymous', inline: true },
+      { name: 'Receiver', value: 'Anonymous', inline: true },
+      { name: 'Transaction ID', value: fakeTxId() }
+    );
+
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+function startAutopostLoop() {
+  setInterval(() => {
+    for (const guild of client.guilds.cache.values()) {
+      const channel = guild.channels.cache.find(
+        (c) => c.type === ChannelType.GuildText && c.name === config.autopost.channelName
+      );
+      if (channel) postFakeTrade(channel);
+    }
+  }, config.autopost.intervalMs);
 }
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
-  const content = message.content.trim().toLowerCase();
-  const profileKey = PREFIXES[content];
-  if (!profileKey) return;
+  const raw = message.content.trim();
+  const lower = raw.toLowerCase();
 
-  if (!isAdmin(message)) {
-    await message.reply('You do not have permission to switch the server profile.').catch(() => {});
+  // Server profile switch
+  const switchKey = SWITCH_PREFIXES[lower];
+  if (switchKey) {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to switch the server profile.').catch(() => {});
+      return;
+    }
+    try {
+      await switchProfile(message, switchKey);
+    } catch (err) {
+      console.error(err);
+      await notify(message.author, '❌ Something went wrong during the switch. Check the console log.');
+    }
     return;
   }
 
-  try {
-    await switchProfile(message, profileKey);
-  } catch (err) {
-    console.error(err);
-    await message.channel.send('❌ Something went wrong during the switch. Check the console log.');
+  // +embed <text> -> posts an embed with that text
+  if (lower.startsWith('+embed')) {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    const text = raw.slice('+embed'.length).trim();
+    if (!text) {
+      await message.reply('Usage: `+embed <text>`').catch(() => {});
+      return;
+    }
+    const embed = new EmbedBuilder().setDescription(text).setColor(config.embed.color);
+    await message.channel.send({ embeds: [embed] }).catch(() => {});
+    await message.delete().catch(() => {});
+    return;
+  }
+
+  // !middleman -> posts the display-only middleman panel
+  if (lower === '!middleman') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await postMiddlemanPanel(message.channel);
+    return;
+  }
+
+  // !auto -> posts the display-only auto crypto panel
+  if (lower === '!auto') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await postAutoCryptoPanel(message.channel);
+    return;
   }
 });
 
-client.once('ready', () => {
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+
+  if (DISPLAY_ONLY_BUTTON_IDS.includes(interaction.customId)) {
+    await interaction
+      .reply({ content: '❌ Failed. Please try again later.', ephemeral: true })
+      .catch(() => {});
+  }
+});
+
+client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
+  startAutopostLoop();
 });
 
 client.login(process.env.DISCORD_TOKEN);
