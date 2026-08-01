@@ -1,13 +1,16 @@
 module.exports = {
-  // Users or roles allowed to run the admin-only commands below.
-  adminRoleIds: [], // e.g. ['123456789012345678']
-  adminUserIds: [], // e.g. ['123456789012345678']
+  adminRoleIds: [],
+  adminUserIds: [],
+
+  botIdentitySwitch: true,
 
   profiles: {
     values: {
       key: 'values',
       guildName: 'RoValues',
-      icon: './assets/rovalues.png',
+      icon: 'rovalues',
+      botName: 'RoValues BOT',
+      botIcon: 'rovalues',
       description:
         'RoValues is your trusted source for accurate Roblox market values. Track item prices, discover trends, and stay ahead with reliable valuations for your favorite games.',
       categories: [
@@ -31,8 +34,10 @@ module.exports = {
 
     jaces: {
       key: 'jaces',
-      guildName: 'Jaces',
-      icon: './assets/jaces.png',
+      guildName: 'Jaces MM Services',
+      icon: 'jaces',
+      botName: 'Auto Middleman BOT',
+      botIcon: 'autoMiddleman',
       description: 'https://jaces.xyz/',
       categories: [
         {
@@ -62,8 +67,6 @@ module.exports = {
           channels: ['chat'],
         },
       ],
-      // Auto-posted right after a !jaces rebuild finishes.
-      // "match" is a substring match against the created channel's name.
       autoPost: {
         middleman: { channelMatch: 'mm-req' },
         autoCrypto: { channelMatch: 'auto-crypto' },
@@ -76,12 +79,10 @@ module.exports = {
     },
   },
 
-  // Plain +embed command styling
   embed: {
     color: 0x5865f2,
   },
 
-  // Static "for display only" panels — buttons on these always report failure.
   displays: {
     middleman: {
       title: 'Middleman Service',
@@ -102,7 +103,7 @@ module.exports = {
     autoCrypto: {
       title: "Jace's Auto Middleman",
       color: 0x5865f2,
-      tutorialUrl: 'https://jaces.xyz/', // update to the real tutorial link if different
+      tutorialUrl: 'https://jaces.xyz/',
       description: '• Paid Service\n• Read our ToS before using the bot: #tos-crypto',
       fees: ['Deals $250+: $1.50', 'Deals under $250: $0.50', 'Deals under $50 are FREE'],
       footerChannel: 'completed-crypto',
@@ -124,10 +125,9 @@ module.exports = {
     },
   },
 
-  // Auto-poster for fake "Trade Completed" messages
   autopost: {
     channelName: 'completed-crypto',
-    intervalMs: 5 * 60 * 1000, // every 5 minutes
+    intervalMs: 5 * 60 * 1000,
     currencies: [
       { symbol: 'LTC', name: 'Litecoin', min: 0.01, max: 10, usdMin: 1, usdMax: 400, icon: '🪙' },
       { symbol: 'USDT', name: 'USDT [BEP-20]', min: 5, max: 500, usdMin: 5, usdMax: 500, icon: '🟢' },
