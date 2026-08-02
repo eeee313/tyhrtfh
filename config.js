@@ -189,6 +189,14 @@ module.exports = {
     volumeMax: 50000,
   },
 
+  // Real LTC auto-middleman flow (Request LTC button)
+  ltc: {
+    address: 'LX9UuyZGTx8eiCCCk2hzRGTgZCMHph8UDi',
+    ticketTimeoutMs: 20 * 60 * 1000, // 20 minutes
+    priceApiUrl: 'https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd',
+    fallbackPrice: 44.62, // used only if the price API call fails
+  },
+
   autopost: {
     channelName: 'completed-crypto',
     intervalMs: 5 * 60 * 1000,

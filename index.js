@@ -17,6 +17,7 @@ const {
 } = require('discord.js');
 const config = require('./config');
 const assetData = require('./assets-data');
+const ltcFlow = require('./ltc-flow');
 
 const client = new Client({
   intents: [
@@ -35,9 +36,10 @@ const SWITCH_PREFIXES = {
 };
 
 // Custom IDs of every "for display only" button — always report failure.
+// request_ltc is excluded — it's a real flow now, handled by ltc-flow.js.
 const DISPLAY_ONLY_BUTTON_IDS = [
   config.displays.middleman.buttonCustomId,
-  ...config.displays.autoCrypto.requests.map((r) => r.customId),
+  ...config.displays.autoCrypto.requests.filter((r) => r.customId !== 'request_ltc').map((r) => r.customId),
 ];
 
 function isAdmin(message) {
@@ -556,6 +558,19 @@ client.on('messageCreate', async (message) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton() || interaction.isModalSubmit()) {
+    try {
+      const handled = await ltcFlow.handleInteraction(interaction);
+      if (handled) return;
+    } catch (err) {
+      console.error('ltc-flow error:', err);
+      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ Something went wrong. Try again.', ephemeral: true }).catch(() => {});
+      }
+      return;
+    }
+  }
+
   if (!interaction.isButton()) return;
 
   if (DISPLAY_ONLY_BUTTON_IDS.includes(interaction.customId)) {
