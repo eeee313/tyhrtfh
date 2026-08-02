@@ -157,20 +157,32 @@ async function applyBranding(guild, profile, notifyUser) {
   });
 }
 
-// Changes the BOT'S NICKNAME in this server only (autonick)
-async function applyBotNickname(guild, profile, notifyUser) {
+// Changes the bot's per-server nickname + per-server avatar, and renames its
+// designated role to match — all scoped to this guild only, not global.
+async function applyBotIdentity(guild, profile, notifyUser) {
   if (!config.botIdentitySwitch || !profile.botName) return;
 
-  const me = guild.members.me;
-  if (!me) {
-    console.error('guild.members.me not available');
-    return;
+  const options = { nick: profile.botName };
+  if (profile.botIcon) {
+    options.avatar = assetData[profile.botIcon];
   }
 
-  await me.setNickname(profile.botName).catch(async (e) => {
-    console.error('setNickname failed:', e.message);
-    await notify(notifyUser, `⚠️ Couldn't change bot nickname to "${profile.botName}" (${e.message}).`);
+  await guild.members.editMe(options).catch(async (e) => {
+    console.error('editMe (nick/avatar) failed:', e.message);
+    await notify(notifyUser, `⚠️ Couldn't update the bot's nickname/avatar (${e.message}).`);
   });
+
+  if (config.botRoleId) {
+    const role = guild.roles.cache.get(config.botRoleId);
+    if (role) {
+      await role.setName(profile.botName).catch(async (e) => {
+        console.error('bot role rename failed:', e.message);
+        await notify(notifyUser, `⚠️ Couldn't rename the bot's role (${e.message}).`);
+      });
+    } else {
+      console.error('bot role not found for id:', config.botRoleId);
+    }
+  }
 }
 
 async function notify(user, text) {
@@ -193,37 +205,6 @@ function resolveChannel(guild, spec) {
   }
   if (spec.channelMatch) return findChannel(guild, spec.channelMatch);
   return null;
-}
-
-async function runJacesAutoPost(guild) {
-  const cfg = config.profiles.jaces.autoPost;
-  if (!cfg) return;
-
-  const mmChannel = findChannel(guild, cfg.middleman.channelMatch);
-  if (mmChannel) await postMiddlemanPanel(mmChannel);
-
-  const autoChannel = findChannel(guild, cfg.autoCrypto.channelMatch);
-  if (autoChannel) await postAutoCryptoPanel(autoChannel);
-
-  const tosCryptoChannel = findChannel(guild, cfg.tosCrypto.channelMatch);
-  if (tosCryptoChannel) await postMessages(tosCryptoChannel, config.tosCryptoMessages, config.tosUrl);
-
-  const mmTosChannel = findChannel(guild, cfg.mmTos.channelMatch);
-  if (mmTosChannel) await postMessages(mmTosChannel, config.mmTosMessages, config.tosUrl);
-
-  const shopChannel = resolveChannel(guild, cfg.shop);
-  if (shopChannel) {
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setLabel(cfg.shop.buttonLabel).setStyle(ButtonStyle.Link).setURL(cfg.shop.inviteUrl)
-    );
-    await shopChannel.send({ components: [row] }).catch(() => {});
-  }
-
-  const serversChannel = findChannel(guild, cfg.serverLinks.channelMatch);
-  if (serversChannel) {
-    const text = `${cfg.serverLinks.links.join('\n')}\n\n${cfg.serverLinks.note}`;
-    await serversChannel.send(text).catch(() => {});
-  }
 }
 
 async function switchProfile(message, key) {
@@ -253,11 +234,7 @@ async function switchProfile(message, key) {
 
   await syncProfile(guild, profile);
   await applyBranding(guild, profile, author);
-  await applyBotNickname(guild, profile, author);
-
-  if (key === 'jaces') {
-    await runJacesAutoPost(guild);
-  }
+  await applyBotIdentity(guild, profile, author);
 
   await notify(author, `✅ Server switched to **${profile.guildName}**.`);
 }
@@ -274,6 +251,11 @@ async function postMiddlemanPanel(channel) {
 async function postAutoCryptoPanel(channel) {
   const d = config.displays.autoCrypto;
   const feesText = d.fees.map((f) => `• ${f}`).join('\n');
+  // Small/greyed "subtext" style — each line needs its own "-# " prefix.
+  const descText = d.description
+    .split('\n')
+    .map((line) => `-# ${line}`)
+    .join('\n');
 
   const infoContainer = new ContainerBuilder().setAccentColor(0x5865f2);
 
@@ -290,13 +272,16 @@ async function postAutoCryptoPanel(channel) {
   }
 
   infoContainer
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(d.description))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(descText))
     .addSeparatorComponents(new SeparatorBuilder())
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**Fees:**\n${feesText}`));
 
   const requestContainers = d.requests.map((r) => {
     const accent = r.style === 'success' ? 0x57f287 : 0x5865f2;
-    const text = r.note ? `**${r.label}**\n${r.note}` : `**${r.label}**`;
+    const icon = r.icon ? `${r.icon} · ` : '';
+    const iconEnd = r.icon ? ` · ${r.icon}` : '';
+    const headerLine = `${icon}**${r.label}**${iconEnd}`;
+    const text = r.note ? `${headerLine}\n-# ${r.note}` : headerLine;
     return new ContainerBuilder()
       .setAccentColor(accent)
       .addSectionComponents(
@@ -481,12 +466,54 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (lower === '!auto') {
+  if (lower === '!crypto') {
     if (!isAdmin(message)) {
       await message.reply('You do not have permission to do that.').catch(() => {});
       return;
     }
     await postAutoCryptoPanel(message.channel);
+    return;
+  }
+
+  if (lower === '!servers') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    const cfg = config.profiles.jaces.autoPost.serverLinks;
+    const text = `${cfg.links.join('\n')}\n\n${cfg.note}`;
+    await message.channel.send(text).catch(() => {});
+    return;
+  }
+
+  if (lower === '!autotos') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await postMessages(message.channel, config.tosCryptoMessages, config.tosUrl);
+    return;
+  }
+
+  if (lower === '!tos') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await postMessages(message.channel, config.mmTosMessages, config.tosUrl);
+    return;
+  }
+
+  if (lower === '!shop') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    const cfg = config.profiles.jaces.autoPost.shop;
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel(cfg.buttonLabel).setStyle(ButtonStyle.Link).setURL(cfg.inviteUrl)
+    );
+    await message.channel.send({ components: [row] }).catch(() => {});
     return;
   }
 

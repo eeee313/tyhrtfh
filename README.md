@@ -1,86 +1,86 @@
 # Server Profile Switcher
 
-Switches a Discord server's whole layout (channels, categories, name, icon,
-description, bot nickname) between two saved profiles: **RoValues** and
-**Jaces MM Services**.
+Switches a Discord server's layout (channels, categories, name, icon,
+description) and the bot's own per-server nickname/avatar/role name between
+two saved profiles: **RoValues** and **Jaces MM Services**.
 
 ## Setup
 
 1. `npm install`
 2. Set `DISCORD_TOKEN` as an environment variable (Railway: Variables tab;
-   local dev: copy `.env.example` to `.env` and fill it in).
+   local dev: copy `.env.example` to `.env`).
 3. Images are baked into `assets-data.js` as base64 — nothing is read from
-   disk at runtime, so there's no separate `assets/` folder to lose track of.
-4. In `config.js`, fill in `adminRoleIds` / `adminUserIds` with the IDs allowed
-   to run admin-only commands (Administrator permission always works too).
+   disk at runtime.
+4. In `config.js`, fill in `adminRoleIds` / `adminUserIds` (Administrator
+   permission always works too).
 5. Invite the bot with **Administrator**, or at minimum: Manage Server,
    Manage Channels, Manage Roles, Manage Nicknames, Manage Guild Expressions.
-6. The **server owner's account** needs 2FA enabled — Discord requires this
-   for a bot to do certain destructive/administrative actions on a server.
-7. `npm start`
+6. The **Server Members Intent** must be turned on for this bot in the
+   Discord Developer Portal (Bot tab) — needed for `!stats`'s random member
+   pick.
+7. The **server owner's account** needs 2FA enabled — Discord requires this
+   for certain administrative bot actions.
+8. `npm start`
 
 ## Commands
 
 | Command | Who | What it does |
 |---|---|---|
 | `!values` | admin | Switches this server to **RoValues** (✅ confirm first) |
-| `!jaces` | admin | Switches this server to **Jaces MM Services** (✅ confirm first), then auto-posts: middleman panel → `mm-req`, auto-crypto panel → `auto-crypto`, ToS/rules messages → `tos-crypto` and `mm-tos`, "Join 🛒" button → `🛒`, invite links → `servers` |
-| `+embed <text>` | admin | Deletes your message and reposts the text as an embed |
-| `+say <text>` | admin | Deletes your message and reposts the text as plain text (no embed) |
-| `!middleman` | admin | Manually (re)posts the Middleman Service panel — button always shows "Failed" |
-| `!auto` | admin | Manually (re)posts the Jace's Auto Middleman panel (boxed layout matching the reference screenshot) — buttons always show "Failed" |
-| `!send` | admin | Posts one random fake "Trade Completed" transaction on demand |
-| `!stats` | anyone | Posts a fake rank/volume card into `#commands`, attributed to a **random member** (see below) |
+| `!jaces` | admin | Switches this server to **Jaces MM Services** (✅ confirm first) — layout, icon, description, and bot identity only; nothing auto-posts anymore, use the commands below |
+| `!middleman` | admin | Posts the Middleman Service panel — button always shows "Failed" |
+| `!crypto` | admin | Posts the Jace's Auto Middleman panel (boxed layout) — buttons always show "Failed" |
+| `!servers` | admin | Posts the two Jaces invite links |
+| `!autotos` | admin | Posts the auto-crypto ToS/rules messages |
+| `!tos` | admin | Posts the manual-middleman ToS/rules messages |
+| `!shop` | admin | Posts the "Join 🛒" button |
+| `!send` | admin | Posts one random fake "Trade Completed" transaction |
+| `!stats` | anyone | Posts a fake rank/volume card into `#commands`, attributed to a random member |
+| `+embed <text>` | admin | Deletes your message, reposts it as an embed |
+| `+say <text>` | admin | Deletes your message, reposts it as plain text |
 
-## How switching works
+All of `!middleman` / `!crypto` / `!servers` / `!autotos` / `!tos` / `!shop`
+post into **whatever channel you run them in** — run each one in its
+intended channel.
 
-Instead of deleting and recreating channels every time (destructive, slow,
-loses message history), `!values`/`!jaces` **hide** channels that don't
-belong to the target profile and **show/create** the ones that do — so
-running the same switch twice is fast and non-destructive. Categories and
-channels are matched by exact name.
+## Bot identity per profile
 
-The bot also renames itself (server nickname only, not its global username)
-to match the active profile via `botName` in `config.js`.
+`!values` / `!jaces` set, in this server only:
+- **Nickname** — `RoValues BOT` / `Jaces Middleman BOT`
+- **Per-server avatar** — the RoValues logo / the Jaces (JMS) icon
+- **Role name** — the role with ID set in `config.botRoleId` gets renamed to
+  match the bot's current nickname
 
-## Auto-poster
-
-Every 5 minutes, posts a fake "Trade Completed" embed (random LTC or USDT
-amount, fake transaction ID, `Anonymous`/`Anonymous`) into any channel named
-`completed-crypto`. Adjust the channel name or interval in `config.js` under
-`autopost`. `!send` posts one on demand, same format.
+None of this touches the bot's global username or avatar — it's all scoped
+to this one server via Discord's per-guild member identity, so there's no
+cross-server side effect and no global rate-limit risk.
 
 ## !stats random member pool
 
 `config.stats.randomPoolId` is tried in this order: a **role** with that ID
-(picks a random member who has it) → a **specific member** with that ID →
-any non-bot member in the server. This needs the **Server Members Intent**
-enabled for the bot in the Discord Developer Portal (Bot tab) — without it,
-member fetching silently fails and `!stats` falls back to whoever ran the
-command.
+→ a **specific member** with that ID → any non-bot member. Needs the Server
+Members Intent (see setup step 6) or it silently falls back to whoever ran
+the command.
 
 ## Jaces MM Services channel layout
 
-`Social` now includes `chat`, `commands`, and `🛒` alongside the existing
-categories. `#commands` is where `!stats` posts its cards; `#🛒` gets a
-"Join 🛒" button linking to `config.profiles.jaces.autoPost.shop.inviteUrl`
-(currently `discord.gg/jacemarket`). That button now targets an exact
-**channel ID**, not a name match — the RoValues profile also has a channel
-called `🛒〢sell-your-items`, and matching by name alone could post the
-join button there instead of the intended `🛒` channel.
+`Social` includes `chat`, `commands`, and `🛒`. `#commands` is where
+`!stats` posts; the `!shop` button targets an exact **channel ID**
+(`config.profiles.jaces.autoPost.shop.channelId`), not a name match — the
+RoValues profile also has a channel called `🛒〢sell-your-items`, and
+matching by name alone risked posting there instead.
 
 ## If the description still doesn't update
 
 Some servers block description edits unless **Community** is enabled in
-Server Settings → Overview. Turn that on and re-run the switch — the bot
-will DM you this exact reason if it happens.
+Server Settings → Overview. The bot DMs you this exact reason if it happens.
 
 ## Notes
 
-- All channels in both profiles are locked for `@everyone`: no sending
-  messages, no threads, no reactions. Admins bypass this via the
-  Administrator permission, same as always.
+- All channels in both profiles are locked for `@everyone` (no messages,
+  threads, or reactions); admins bypass this via Administrator permission.
+- `!values`/`!jaces` hide/show channels rather than deleting and recreating
+  them, so switching back and forth is fast and non-destructive.
 - Status/error messages for `!values`/`!jaces` are sent as a **DM** to
   whoever ran the command.
-- `tosUrl` in `config.js` is a placeholder (`https://jaces.xyz/tos`) — swap
-  in the real ToS link if it's different.
+- `tosUrl` in `config.js` is a placeholder — swap in the real ToS link.

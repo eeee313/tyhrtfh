@@ -3,6 +3,8 @@ module.exports = {
   adminUserIds: [],
 
   botIdentitySwitch: true,
+  // Role that gets renamed to match the active profile's bot name.
+  botRoleId: '1527832011505401936',
 
   profiles: {
     values: {
@@ -36,8 +38,8 @@ module.exports = {
       key: 'jaces',
       guildName: 'Jaces MM Services',
       icon: 'jaces',
-      botName: 'Jaces MM Service',
-      botIcon: 'autoMiddleman',
+      botName: 'Jaces Middleman BOT',
+      botIcon: 'jaces',
       description: 'https://jaces.xyz/',
       categories: [
         {
@@ -119,6 +121,7 @@ module.exports = {
       requests: [
         {
           label: 'Request Litecoin',
+          icon: '🪙',
           note: null,
           buttonLabel: 'Request LTC',
           customId: 'request_ltc',
@@ -126,6 +129,7 @@ module.exports = {
         },
         {
           label: 'Request USDT [BEP-20]',
+          icon: '🟢',
           note: 'Network: BSC (BEP-20)',
           buttonLabel: 'Request USDT [BEP-20]',
           customId: 'request_usdt',
