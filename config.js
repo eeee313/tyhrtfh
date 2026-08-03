@@ -192,6 +192,7 @@ module.exports = {
   // Real LTC auto-middleman flow (Request LTC button)
   ltc: {
     address: 'LX9UuyZGTx8eiCCCk2hzRGTgZCMHph8UDi',
+    ticketCategoryId: '1533479895676616838',
     ticketTimeoutMs: 20 * 60 * 1000, // 20 minutes
     priceApiUrl: 'https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd',
     fallbackPrice: 44.62, // used only if the price API call fails

@@ -1,7 +1,8 @@
-// Real "Request LTC" auto-middleman flow: modal -> ticket -> role select ->
-// role confirm -> USD amount -> USD confirm -> payment address. No blockchain
-// verification is implemented — it stops at showing payment info and closes
-// the ticket automatically after a timeout if nothing else happens.
+// Real "Request LTC" auto-middleman flow: modal -> private ticket channel ->
+// role select -> role confirm -> USD amount -> USD confirm -> payment address.
+// No blockchain verification is implemented — it stops at showing payment
+// info and closes the ticket automatically after a timeout if nothing else
+// happens.
 
 const {
   EmbedBuilder,
@@ -11,6 +12,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  ChannelType,
+  PermissionsBitField,
 } = require('discord.js');
 const config = require('./config');
 
@@ -19,10 +22,6 @@ let counter = 0;
 function newTicketId() {
   counter += 1;
   return `${Date.now()}${counter}`;
-}
-
-function otherParty(ticket, userId) {
-  return userId === ticket.initiatorId ? ticket.traderId : ticket.initiatorId;
 }
 
 function isParticipant(ticket, userId) {
@@ -34,6 +33,15 @@ function clearTicketTimeout(ticket) {
     clearTimeout(ticket.closeTimeout);
     ticket.closeTimeout = null;
   }
+}
+
+function sanitizeForChannelName(str) {
+  return (
+    str
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, '')
+      .slice(0, 24) || 'user'
+  );
 }
 
 // --- Step 1: button click -> show modal ---
@@ -68,7 +76,7 @@ async function openRequestModal(interaction) {
   await interaction.showModal(modal);
 }
 
-// --- Step 2: modal submitted -> create the ticket ---
+// --- Step 2: modal submitted -> create the private ticket channel ---
 
 async function handleRequestModalSubmit(interaction) {
   const rawTraderId = interaction.fields.getTextInputValue('trader_id').trim();
@@ -87,8 +95,49 @@ async function handleRequestModalSubmit(interaction) {
   }
 
   if (traderMember.id === interaction.user.id) {
+    await interaction.reply({ content: "⚠️ You can't open a trade with yourself.", ephemeral: true }).catch(() => {});
+    return;
+  }
+
+  const guild = interaction.guild;
+  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  const channelName = `LTC-${sanitizeForChannelName(interaction.user.username)}-${randomNum}`;
+
+  const overwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+    {
+      id: interaction.user.id,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory,
+      ],
+    },
+    {
+      id: traderMember.id,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory,
+      ],
+    },
+  ];
+  for (const roleId of config.adminRoleIds || []) {
+    overwrites.push({ id: roleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory] });
+  }
+
+  let ticketChannel;
+  try {
+    ticketChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: config.ltc.ticketCategoryId || undefined,
+      permissionOverwrites: overwrites,
+    });
+  } catch (e) {
+    console.error('ticket channel create failed:', e.message);
     await interaction
-      .reply({ content: "⚠️ You can't open a trade with yourself.", ephemeral: true })
+      .reply({ content: `⚠️ Couldn't create the ticket channel (${e.message}).`, ephemeral: true })
       .catch(() => {});
     return;
   }
@@ -96,7 +145,7 @@ async function handleRequestModalSubmit(interaction) {
   const id = newTicketId();
   const ticket = {
     id,
-    channelId: interaction.channelId,
+    channelId: ticketChannel.id,
     initiatorId: interaction.user.id,
     traderId: traderMember.id,
     giving,
@@ -111,9 +160,10 @@ async function handleRequestModalSubmit(interaction) {
   };
   tickets.set(id, ticket);
 
-  await interaction.reply(buildTicketPayload(ticket));
-  const sent = await interaction.fetchReply().catch(() => null);
+  const sent = await ticketChannel.send(buildTicketPayload(ticket)).catch(() => null);
   if (sent) ticket.messages.ticket = sent.id;
+
+  await interaction.reply({ content: `🎫 Ticket created: ${ticketChannel}`, ephemeral: true }).catch(() => {});
 }
 
 // --- Ticket info + role selection message ---
@@ -128,7 +178,7 @@ function buildTicketPayload(ticket) {
       "👋 · **Jace's Auto Middleman Service**\n" +
         'Make sure to follow the steps and read the instructions thoroughly.\n' +
         'Please explicitly state the trade details if the information below is inaccurate.\n' +
-        `By using this bot, you agree to our ToS #tos-crypto.\n` +
+        'By using this bot, you agree to our ToS #tos-crypto.\n' +
         "Whether you're the seller or the buyer, make sure to video-record everything in this deal."
     )
     .addFields(
@@ -136,21 +186,20 @@ function buildTicketPayload(ticket) {
       { name: `${traderMention}'s side:`, value: ticket.traderGiving || '\u200b' }
     );
 
+  const senderName = ticket.roles.sender ? `<@${ticket.roles.sender}>` : '...';
+  const receiverName = ticket.roles.receiver ? `<@${ticket.roles.receiver}>` : '...';
+  const roleEmbed = new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setDescription(
+      '🛡️ · **Select your role**\n' +
+        '"__Sender__" if you are __Sending__ LTC to the bot.\n' +
+        '"__Receiver__" if you are __Receiving__ LTC *later* from the bot.'
+    )
+    .addFields({ name: 'Sender', value: senderName, inline: true }, { name: 'Receiver', value: receiverName, inline: true });
+
   const rows = [];
 
   if (ticket.status === 'awaiting_roles') {
-    const senderName = ticket.roles.sender ? `<@${ticket.roles.sender}>` : '...';
-    const receiverName = ticket.roles.receiver ? `<@${ticket.roles.receiver}>` : '...';
-
-    const roleEmbed = new EmbedBuilder()
-      .setColor(0x2b2d31)
-      .setDescription(
-        '🛡️ · **Select your role**\n' +
-          '"Sender" if you are Sending LTC to the bot.\n' +
-          '"Receiver" if you are Receiving LTC *later* from the bot.'
-      )
-      .addFields({ name: 'Sender', value: senderName, inline: true }, { name: 'Receiver', value: receiverName, inline: true });
-
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`ltc_role_sender:${ticket.id}`).setLabel('Sender').setStyle(ButtonStyle.Primary),
@@ -158,26 +207,15 @@ function buildTicketPayload(ticket) {
         new ButtonBuilder().setCustomId(`ltc_role_reset:${ticket.id}`).setLabel('Reset').setStyle(ButtonStyle.Danger)
       )
     );
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`ltc_delete:${ticket.id}`).setLabel('Delete Ticket').setStyle(ButtonStyle.Danger)
-      )
-    );
-
-    return { content: `${initiatorMention} ${traderMention}`, embeds: [infoEmbed, roleEmbed], components: rows };
   }
-
-  // Roles picked — show them as plain text, keep only Delete Ticket.
-  const senderName = ticket.roles.sender ? `<@${ticket.roles.sender}>` : '...';
-  const receiverName = ticket.roles.receiver ? `<@${ticket.roles.receiver}>` : '...';
-  const roleEmbed = new EmbedBuilder()
-    .setColor(0x2b2d31)
-    .setDescription('🛡️ · **Select your role**')
-    .addFields({ name: 'Sender', value: senderName, inline: true }, { name: 'Receiver', value: receiverName, inline: true });
 
   rows.push(
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`ltc_delete:${ticket.id}`).setLabel('Delete Ticket').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder()
+        .setCustomId(`ltc_delete:${ticket.id}`)
+        .setLabel('Delete Ticket')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger)
     )
   );
 
@@ -199,7 +237,6 @@ async function handleRoleButton(interaction, ticket, role) {
     return;
   }
 
-  // Clear this user from whichever slot they held, then assign the new one.
   if (ticket.roles.sender === interaction.user.id) delete ticket.roles.sender;
   if (ticket.roles.receiver === interaction.user.id) delete ticket.roles.receiver;
   ticket.roles[role] = interaction.user.id;
@@ -238,14 +275,14 @@ async function postRoleConfirm(channel, ticket) {
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
     .setDescription(
-      '· **Is This Information Correct?**\n\n' +
+      '❔ · **Is This Information Correct?**\n\n' +
         `**Sender**\n${senderMention}\n\n**Receiver**\n${receiverMention}\n\n` +
         'Make sure you have selected the right role! If you didn\'t then click "Incorrect"'
     );
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`ltc_role_correct:${ticket.id}`).setLabel('Correct').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`ltc_role_incorrect:${ticket.id}`).setLabel('Incorrect').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`ltc_role_correct:${ticket.id}`).setLabel('Correct').setEmoji('✅').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ltc_role_incorrect:${ticket.id}`).setLabel('Incorrect').setEmoji('❌').setStyle(ButtonStyle.Danger)
   );
 
   const msg = await channel
@@ -262,6 +299,10 @@ async function deleteTrackedMessage(channel, ticket, key) {
   delete ticket.messages[key];
 }
 
+function confirmLineEmbed(userId) {
+  return new EmbedBuilder().setColor(0x57f287).setDescription(`✅ <@${userId}> clicked Correct.`);
+}
+
 async function handleRoleConfirmButton(interaction, ticket, correct) {
   if (!isParticipant(ticket, interaction.user.id)) {
     await interaction.reply({ content: "This isn't your ticket.", ephemeral: true }).catch(() => {});
@@ -273,18 +314,25 @@ async function handleRoleConfirmButton(interaction, ticket, correct) {
     ticket.roleConfirmed = {};
     ticket.status = 'awaiting_roles';
     await interaction.update({ content: '❌ Marked incorrect — pick your roles again.', embeds: [], components: [] }).catch(() => {});
+    delete ticket.messages.roleConfirm;
     await refreshTicketMessage(interaction.channel, ticket);
     return;
   }
 
+  if (ticket.roleConfirmed[interaction.user.id]) {
+    await interaction.reply({ content: 'You already confirmed.', ephemeral: true }).catch(() => {});
+    return;
+  }
   ticket.roleConfirmed[interaction.user.id] = true;
-  const msg = interaction.message;
-  const newLine = `✅ <@${interaction.user.id}> clicked Correct.`;
-  const content = msg.content.includes(newLine) ? msg.content : `${msg.content}\n${newLine}`;
 
-  await interaction.update({ content }).catch(() => {});
+  const existingEmbeds = interaction.message.embeds.map((e) => EmbedBuilder.from(e));
+  const newEmbeds = [...existingEmbeds, confirmLineEmbed(interaction.user.id)];
 
   const bothConfirmed = ticket.roleConfirmed[ticket.roles.sender] && ticket.roleConfirmed[ticket.roles.receiver];
+  await interaction
+    .update({ embeds: newEmbeds, components: bothConfirmed ? [] : interaction.message.components })
+    .catch(() => {});
+
   if (bothConfirmed) {
     ticket.status = 'awaiting_usd';
     await postSetUsdPrompt(interaction.channel, ticket);
@@ -295,7 +343,7 @@ async function handleRoleConfirmButton(interaction, ticket, correct) {
 
 async function postSetUsdPrompt(channel, ticket) {
   const senderMention = `<@${ticket.roles.sender}>`;
-  const embed = new EmbedBuilder().setColor(0x2b2d31).setDescription('💵 · **Set the amount in USD value**');
+  const embed = new EmbedBuilder().setColor(0x2b2d31).setDescription('🔢 · **Set the amount in USD value**');
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`ltc_set_usd:${ticket.id}`).setLabel('Set USD Amount').setStyle(ButtonStyle.Primary)
   );
@@ -335,10 +383,10 @@ async function handleUsdModalSubmit(interaction, ticket) {
   const receiverMention = `<@${ticket.roles.receiver}>`;
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setDescription(`· **USD amount set to $${amount.toFixed(2)}.**\nPlease confirm the USD amount.`);
+    .setDescription(`💵 · **USD amount set to \`$${amount.toFixed(2)}\`.**\nPlease confirm the USD amount.`);
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`ltc_usd_correct:${ticket.id}`).setLabel('Correct').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`ltc_usd_incorrect:${ticket.id}`).setLabel('Incorrect').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`ltc_usd_correct:${ticket.id}`).setLabel('Correct').setEmoji('✅').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ltc_usd_incorrect:${ticket.id}`).setLabel('Incorrect').setEmoji('❌').setStyle(ButtonStyle.Danger)
   );
 
   await interaction.reply({ content: `${senderMention} ${receiverMention}`, embeds: [embed], components: [row] });
@@ -357,18 +405,25 @@ async function handleUsdConfirmButton(interaction, ticket, correct) {
     ticket.usdConfirmed = {};
     ticket.status = 'awaiting_usd';
     await interaction.update({ content: '❌ Marked incorrect — set the USD amount again.', embeds: [], components: [] }).catch(() => {});
+    delete ticket.messages.usdConfirm;
     await postSetUsdPrompt(interaction.channel, ticket);
     return;
   }
 
+  if (ticket.usdConfirmed[interaction.user.id]) {
+    await interaction.reply({ content: 'You already confirmed.', ephemeral: true }).catch(() => {});
+    return;
+  }
   ticket.usdConfirmed[interaction.user.id] = true;
-  const newLine = `✅ <@${interaction.user.id}> clicked Correct.`;
-  const content = interaction.message.content.includes(newLine)
-    ? interaction.message.content
-    : `${interaction.message.content}\n${newLine}`;
-  await interaction.update({ content }).catch(() => {});
+
+  const existingEmbeds = interaction.message.embeds.map((e) => EmbedBuilder.from(e));
+  const newEmbeds = [...existingEmbeds, confirmLineEmbed(interaction.user.id)];
 
   const bothConfirmed = ticket.usdConfirmed[ticket.roles.sender] && ticket.usdConfirmed[ticket.roles.receiver];
+  await interaction
+    .update({ embeds: newEmbeds, components: bothConfirmed ? [] : interaction.message.components })
+    .catch(() => {});
+
   if (bothConfirmed) {
     ticket.status = 'awaiting_payment';
     await postPaymentInfo(interaction.channel, ticket);
@@ -398,20 +453,23 @@ async function postPaymentInfo(channel, ticket) {
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setDescription(
-      'Send the LTC to the following address.\n\n' +
-        '💵 · **Payment Information**\n' +
-        'Make sure to send the **EXACT** amount in LTC.\n\n' +
-        `USD Amount: $${ticket.usdAmount.toFixed(2)}\nLTC Amount: ${ltcAmount}\n\n` +
-        `Payment Address:\n\`${config.ltc.address}\`\n\n` +
-        `Current LTC Price: $${price.toFixed(2)}\n` +
-        'This ticket will be closed within 20 minutes if no transaction was detected.'
-    );
+    .setDescription('🧾 · **Payment Information**\nMake sure to send the **EXACT** amount in LTC.')
+    .addFields(
+      { name: 'USD Amount', value: `$${ticket.usdAmount.toFixed(2)}`, inline: true },
+      { name: 'LTC Amount', value: `${ltcAmount}`, inline: true },
+      { name: 'Payment Address', value: `\`${config.ltc.address}\`` }
+    )
+    .setFooter({
+      text: `Current LTC Price: $${price.toFixed(2)}\nThis ticket will be closed within 20 minutes if no transaction was detected.`,
+    });
+
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`ltc_copy:${ticket.id}`).setLabel('Copy Details').setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId(`ltc_copy:${ticket.id}`).setLabel('Copy Details').setEmoji('📋').setStyle(ButtonStyle.Primary)
   );
 
-  const msg = await channel.send({ content: senderMention, embeds: [embed], components: [row] }).catch(() => null);
+  const msg = await channel
+    .send({ content: `${senderMention} Send the LTC to the following address.`, embeds: [embed], components: [row] })
+    .catch(() => null);
   if (msg) ticket.messages.payment = msg.id;
 
   ticket.closeTimeout = setTimeout(async () => {
@@ -440,7 +498,7 @@ async function handleCopyButton(interaction, ticket) {
   await interaction.reply({ content: `\`\`\`\n${text}\n\`\`\``, ephemeral: true }).catch(() => {});
 }
 
-// --- Delete ticket ---
+// --- Delete ticket (deletes the whole channel) ---
 
 async function handleDelete(interaction, ticket) {
   if (!isParticipant(ticket, interaction.user.id) && !interaction.member?.permissions?.has('Administrator')) {
@@ -448,14 +506,9 @@ async function handleDelete(interaction, ticket) {
     return;
   }
   clearTicketTimeout(ticket);
-  const channel = interaction.channel;
-  for (const key of Object.keys(ticket.messages)) {
-    await deleteTrackedMessage(channel, ticket, key);
-  }
-  await interaction.deferUpdate().catch(() => {});
-  const ticketMsg = await channel.messages.fetch(ticket.messages.ticket).catch(() => null);
-  if (ticketMsg) await ticketMsg.delete().catch(() => {});
   tickets.delete(ticket.id);
+  await interaction.reply({ content: '🗑️ Deleting this ticket...' }).catch(() => {});
+  await interaction.channel.delete().catch(() => {});
 }
 
 // --- Router ---

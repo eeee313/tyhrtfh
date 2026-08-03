@@ -75,26 +75,29 @@ Unlike the other buttons (which are display-only and always fail), **Request
 LTC** on the auto-crypto panel now runs a full flow:
 
 1. Modal: trader's ID, what you're giving, what they're giving
-2. Ticket message tagging both people, with their sides listed
+2. Creates a **private ticket channel** under `config.ltc.ticketCategoryId`,
+   named `LTC-<username>-<random 4-digit number>`, visible only to the two
+   participants (plus admin roles) — everything below happens in that
+   channel, not wherever the button was clicked
 3. Both people pick **Sender** / **Receiver** (whoever picks Sender is the
    one who'll send LTC)
-4. Both must click **Correct** to confirm the roles
+4. Both must click **Correct** to confirm the roles — each click adds its
+   own small green confirmation line; once both have clicked, the buttons
+   are removed
 5. The sender sets a **USD amount** (via another modal)
-6. Both must click **Correct** again to confirm that amount
+6. Both must click **Correct** again to confirm that amount, same pattern
 7. Final message (to the sender) with the live LTC price, the exact LTC
    amount to send, and the payment address (`config.ltc.address`)
 
-It stops there — there's no blockchain monitoring, so nothing detects
-whether a payment actually arrives. The ticket auto-closes (edits the
-final message, stops tracking it) after 20 minutes
-(`config.ltc.ticketTimeoutMs`), matching the "closed within 20 minutes if
-no transaction was detected" text, but that closing is just a timer, not a
-real check.
+It stops there — no blockchain monitoring, so nothing detects whether a
+payment actually arrives. The final message auto-edits itself to say
+"Closed — no transaction detected" after 20 minutes
+(`config.ltc.ticketTimeoutMs`), but that's just a timer, not a real check.
+**Delete Ticket** deletes the whole channel.
 
 The LTC price is fetched live from CoinGecko's public API on each ticket;
-if that call fails, it falls back to `config.ltc.fallbackPrice`. This
-needs Node 18+ (for the built-in `fetch`) — see `engines` in
-`package.json`.
+if that call fails, it falls back to `config.ltc.fallbackPrice`. Needs
+Node 18+ (for the built-in `fetch`) — see `engines` in `package.json`.
 
 **Request USDT [BEP-20]** and the middleman panel's button are still
 display-only (always reply "Failed") — only LTC has the real flow so far.
