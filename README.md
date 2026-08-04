@@ -104,25 +104,33 @@ display-only (always reply "Failed") — only LTC has the real flow so far.
 
 ## /lol and /confirm — admin-only transaction simulation
 
-Typed as plain text in an active LTC ticket channel (not real Discord slash
-commands — same style as every other command in this bot):
+Typed as plain text (same style as every other command in this bot, `!`
+prefix, not real Discord slash commands):
 
-- **`/lol`** — only works once a ticket has reached the payment-info step.
-  Posts a "Transaction Detected" message using the ticket's exact required
-  amount as both the received and required amount (simulating a full,
-  correct payment).
-- **`/confirm`** — requires `/lol` to have run first. Posts "Transaction
-  Confirmed!" using the same fake transaction hash, then immediately posts
-  the "You may proceed with your trade" message with **Release**/**Cancel**
-  buttons.
+- **`!lol`** or **`!lol <message link>`** — only works once a ticket has
+  reached the payment-info step. Posts "Transaction Detected" using the
+  ticket's exact required amount as both the received and required amount
+  (simulating a full, correct payment).
+- **`!confirm`** or **`!confirm <message link>`** — requires `!lol` to have
+  run first on that ticket. Posts "Transaction Confirmed!" using the same
+  fake transaction hash, then immediately posts the "You may proceed with
+  your trade" message with **Release**/**Cancel** buttons.
+
+Run either with no argument and it applies to whatever channel you typed it
+in. Paste a link to any message in the ticket (e.g. right-click → Copy
+Message Link on the ticket's payment-info message) and it targets that
+ticket instead — so staff can run these from a separate staff-only channel
+without needing to be in the ticket itself. The bot always posts the actual
+result **into the ticket channel**, not wherever the command was typed, and
+replies with a pointer back to it when those differ.
 
 From there: the **sender** clicks Release → confirms they want to release →
 the **receiver** is prompted for their LTC address → confirms that address →
 the ticket ends on a "Sending..." message.
 
 **None of this ever touches real cryptocurrency.** There's no wallet, no
-private key, and no blockchain broadcast anywhere in this bot — `/lol`,
-`/confirm`, and the entire release chain are cosmetic simulations that stop
+private key, and no blockchain broadcast anywhere in this bot — `!lol`,
+`!confirm`, and the entire release chain are cosmetic simulations that stop
 at "Sending...". If you ever want this to move real funds, that's a
 completely different (and much higher-stakes) project.
 

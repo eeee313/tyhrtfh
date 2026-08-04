@@ -62,6 +62,20 @@ function fakeTxHash() {
   return `${seg()}...${seg()}`;
 }
 
+// Parses a Discord message link (https://discord.com/channels/G/C/M) and
+// returns its channel ID, or null if the text isn't a message link.
+function parseMessageLinkChannelId(text) {
+  if (!text) return null;
+  const match = text.match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/);
+  return match ? match[1] : null;
+}
+
+async function resolveTicketChannel(message, ticket) {
+  const cached = message.guild.channels.cache.get(ticket.channelId);
+  if (cached) return cached;
+  return message.guild.channels.fetch(ticket.channelId).catch(() => null);
+}
+
 // --- Step 1: button click -> show modal ---
 
 async function openRequestModal(interaction) {
@@ -502,16 +516,26 @@ async function handleCopyButton(interaction, ticket) {
   await interaction.reply({ content: `\`\`\`\n${text}\n\`\`\``, ephemeral: true }).catch(() => {});
 }
 
-// --- /lol and /confirm (admin-only simulation of a detected/confirmed tx) ---
+// --- !lol and !confirm (admin-only simulation of a detected/confirmed tx) ---
+// Both accept an optional message link (to the ticket's payment-info message)
+// as their argument, so staff can run them from any channel — without a
+// link, they fall back to whatever channel the command was typed in.
 
-async function handleLolCommand(message) {
-  const ticket = findTicketByChannel(message.channelId);
+async function handleLolCommand(message, linkChannelId) {
+  const targetChannelId = linkChannelId || message.channelId;
+  const ticket = findTicketByChannel(targetChannelId);
   if (!ticket) {
-    await message.reply("There's no LTC ticket in this channel.").catch(() => {});
+    await message.reply("Couldn't find an LTC ticket for that channel.").catch(() => {});
     return;
   }
   if (ticket.status !== 'awaiting_payment' || !ticket.ltcAmount) {
     await message.reply("This ticket isn't waiting on a payment right now.").catch(() => {});
+    return;
+  }
+
+  const ticketChannel = await resolveTicketChannel(message, ticket);
+  if (!ticketChannel) {
+    await message.reply("Couldn't access that ticket's channel.").catch(() => {});
     return;
   }
 
@@ -530,17 +554,27 @@ async function handleLolCommand(message) {
     )
     .addFields({ name: '\u200b', value: 'You will be notified when the transaction is confirmed.' });
 
-  await message.channel.send({ embeds: [embed] }).catch(() => {});
+  await ticketChannel.send({ embeds: [embed] }).catch(() => {});
+  if (ticketChannel.id !== message.channelId) {
+    await message.reply(`✅ Posted to ${ticketChannel}.`).catch(() => {});
+  }
 }
 
-async function handleConfirmCommand(message) {
-  const ticket = findTicketByChannel(message.channelId);
+async function handleConfirmCommand(message, linkChannelId) {
+  const targetChannelId = linkChannelId || message.channelId;
+  const ticket = findTicketByChannel(targetChannelId);
   if (!ticket) {
-    await message.reply("There's no LTC ticket in this channel.").catch(() => {});
+    await message.reply("Couldn't find an LTC ticket for that channel.").catch(() => {});
     return;
   }
   if (!ticket.fakeTx) {
-    await message.reply('Run `/lol` first to simulate a detected transaction.').catch(() => {});
+    await message.reply('Run `!lol` first to simulate a detected transaction.').catch(() => {});
+    return;
+  }
+
+  const ticketChannel = await resolveTicketChannel(message, ticket);
+  if (!ticketChannel) {
+    await message.reply("Couldn't access that ticket's channel.").catch(() => {});
     return;
   }
 
@@ -552,11 +586,15 @@ async function handleConfirmCommand(message) {
       { name: 'Total Amount Received', value: `${ticket.fakeTx.ltcAmount} LTC ($${ticket.usdAmount.toFixed(2)})` }
     );
 
-  await message.channel.send({ embeds: [embed] }).catch(() => {});
+  await ticketChannel.send({ embeds: [embed] }).catch(() => {});
 
   ticket.status = 'awaiting_release';
   clearTicketTimeout(ticket);
-  await postProceedWithTrade(message.channel, ticket);
+  await postProceedWithTrade(ticketChannel, ticket);
+
+  if (ticketChannel.id !== message.channelId) {
+    await message.reply(`✅ Posted to ${ticketChannel}.`).catch(() => {});
+  }
 }
 
 async function postProceedWithTrade(channel, ticket) {
@@ -726,14 +764,29 @@ function parseCustomId(customId) {
 
 // Called from index.js's messageCreate for plain-text commands (admin-only,
 // checked by the caller) that aren't tied to a specific button/modal.
+// Accepts an optional message-link argument pointing at the ticket's
+// payment-info message, so these can be run from any channel.
 async function handleMessageCommand(message) {
-  const lower = message.content.trim().toLowerCase();
-  if (lower === '/lol') {
-    await handleLolCommand(message);
+  const parts = message.content.trim().split(/\s+/);
+  const command = parts[0].toLowerCase();
+  const arg = parts[1];
+
+  if (command === '!lol') {
+    const linkChannelId = parseMessageLinkChannelId(arg);
+    if (arg && !linkChannelId) {
+      await message.reply("That doesn't look like a message link.").catch(() => {});
+      return true;
+    }
+    await handleLolCommand(message, linkChannelId);
     return true;
   }
-  if (lower === '/confirm') {
-    await handleConfirmCommand(message);
+  if (command === '!confirm') {
+    const linkChannelId = parseMessageLinkChannelId(arg);
+    if (arg && !linkChannelId) {
+      await message.reply("That doesn't look like a message link.").catch(() => {});
+      return true;
+    }
+    await handleConfirmCommand(message, linkChannelId);
     return true;
   }
   return false;

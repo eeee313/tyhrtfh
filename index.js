@@ -428,7 +428,7 @@ client.on('messageCreate', async (message) => {
   const raw = message.content.trim();
   const lower = raw.toLowerCase();
 
-  if (lower === '/lol' || lower === '/confirm') {
+  if (lower === '!lol' || lower.startsWith('!lol ') || lower === '!confirm' || lower.startsWith('!confirm ')) {
     if (!isAdmin(message)) {
       await message.reply('You do not have permission to do that.').catch(() => {});
       return;
