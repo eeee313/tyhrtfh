@@ -102,6 +102,30 @@ Node 18+ (for the built-in `fetch`) — see `engines` in `package.json`.
 **Request USDT [BEP-20]** and the middleman panel's button are still
 display-only (always reply "Failed") — only LTC has the real flow so far.
 
+## /lol and /confirm — admin-only transaction simulation
+
+Typed as plain text in an active LTC ticket channel (not real Discord slash
+commands — same style as every other command in this bot):
+
+- **`/lol`** — only works once a ticket has reached the payment-info step.
+  Posts a "Transaction Detected" message using the ticket's exact required
+  amount as both the received and required amount (simulating a full,
+  correct payment).
+- **`/confirm`** — requires `/lol` to have run first. Posts "Transaction
+  Confirmed!" using the same fake transaction hash, then immediately posts
+  the "You may proceed with your trade" message with **Release**/**Cancel**
+  buttons.
+
+From there: the **sender** clicks Release → confirms they want to release →
+the **receiver** is prompted for their LTC address → confirms that address →
+the ticket ends on a "Sending..." message.
+
+**None of this ever touches real cryptocurrency.** There's no wallet, no
+private key, and no blockchain broadcast anywhere in this bot — `/lol`,
+`/confirm`, and the entire release chain are cosmetic simulations that stop
+at "Sending...". If you ever want this to move real funds, that's a
+completely different (and much higher-stakes) project.
+
 ## If the description still doesn't update
 
 Some servers block description edits unless **Community** is enabled in

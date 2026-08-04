@@ -428,6 +428,15 @@ client.on('messageCreate', async (message) => {
   const raw = message.content.trim();
   const lower = raw.toLowerCase();
 
+  if (lower === '/lol' || lower === '/confirm') {
+    if (!isAdmin(message)) {
+      await message.reply('You do not have permission to do that.').catch(() => {});
+      return;
+    }
+    await ltcFlow.handleMessageCommand(message);
+    return;
+  }
+
   const switchKey = SWITCH_PREFIXES[lower];
   if (switchKey) {
     if (!isAdmin(message)) {
