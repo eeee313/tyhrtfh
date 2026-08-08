@@ -9,6 +9,7 @@ Features:
   !support                -> posts a support-only panel (button -> creates a support-name-number channel)
   !welcome                -> sets the current channel to receive "member joined" messages
   !leave                  -> sets the current channel to receive "member left" messages
+  !rolein @role           -> auto-assigns that role to everyone who joins the server
   Ghost ping on join     -> automatically ghost pings + DMs every new member, no command needed
 
 Requirements:
@@ -91,7 +92,10 @@ ticket_data = load_json(TICKET_DATA_FILE, {"ticket_number": 0, "support_number":
 
 # welcome_data structure:
 # { "welcome_channel_id": None, "leave_channel_id": None }
-welcome_data = load_json(WELCOME_DATA_FILE, {"welcome_channel_id": None, "leave_channel_id": None})
+welcome_data = load_json(
+    WELCOME_DATA_FILE,
+    {"welcome_channel_id": None, "leave_channel_id": None, "autorole_id": None},
+)
 
 
 def safe_name(name: str) -> str:
@@ -116,7 +120,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """Ghost ping the new member in the ghost ping channel, DM them, and post a welcome message."""
+    """Ghost ping the new member in the ghost ping channel, DM them, post a welcome message, and auto-role them."""
     channel = member.guild.get_channel(GHOST_PING_CHANNEL_ID)
     if channel is not None:
         try:
@@ -132,6 +136,15 @@ async def on_member_join(member: discord.Member):
     except discord.Forbidden:
         # DMs closed, nothing more we can do
         pass
+
+    autorole_id = welcome_data.get("autorole_id")
+    if autorole_id:
+        role = member.guild.get_role(autorole_id)
+        if role is not None:
+            try:
+                await member.add_roles(role, reason="Autorole on join")
+            except discord.Forbidden:
+                pass
 
     welcome_channel_id = welcome_data.get("welcome_channel_id")
     if welcome_channel_id:
@@ -378,6 +391,28 @@ async def leave_cmd(ctx: commands.Context):
 async def leave_cmd_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
+
+
+@bot.command(name="rolein")
+@commands.has_permissions(administrator=True)
+async def rolein_cmd(ctx: commands.Context, role: discord.Role):
+    """
+    Usage: !rolein @role
+    Everyone who joins the server from now on automatically gets this role.
+    """
+    welcome_data["autorole_id"] = role.id
+    save_json(WELCOME_DATA_FILE, welcome_data)
+    await ctx.send(f"✅ New members will automatically receive {role.mention} when they join.")
+
+
+@rolein_cmd.error
+async def rolein_cmd_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
+    elif isinstance(error, commands.RoleNotFound):
+        await ctx.send("❌ Couldn't find that role.", delete_after=5)
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Usage: `!rolein @role`", delete_after=5)
 
 
 # =========================================================
