@@ -5,17 +5,21 @@ Features:
   +embed <title> | <description> | <hex_color (optional)>
   +say <message>
   !channel               -> turns the current channel into a Counting Channel (count to 1000)
-  !panel                 -> posts a ticket panel (dropdown -> creates ticket / support channel)
+  !panel                 -> posts a ticket-only panel (button -> creates a ticket-name-number channel)
+  !support                -> posts a support-only panel (button -> creates a support-name-number channel)
+  Ghost ping on join     -> automatically ghost pings + DMs every new member, no command needed
 
 Requirements:
   pip install -U discord.py
 
 Before running:
-  1. Set your bot TOKEN below (or set the DISCORD_TOKEN environment variable).
+  1. Set DISCORD_TOKEN as an environment variable (e.g. in Railway → Variables).
   2. Set STAFF_ROLE_ID to the role that should be able to see/manage tickets (or leave as None).
   3. Category IDs are already set to 1535731589655564308 for both tickets and support,
      since that's the category you gave. Change SUPPORT_CATEGORY_ID if you want a
      separate category later.
+  4. TICKET_PING_ROLE_ID (1535727112240242730) is pinged whenever a ticket is created.
+  5. GHOST_PING_CHANNEL_ID (1535727447914451004) is where new members get ghost pinged.
 """
 
 import discord
@@ -35,6 +39,9 @@ SUPPORT_CATEGORY_ID = 1535731589655564308
 # Set this to a role ID (int) that should automatically be added to every ticket.
 # Example: STAFF_ROLE_ID = 123456789012345678
 STAFF_ROLE_ID = None
+
+# Role pinged when a ticket (not support) channel is created
+TICKET_PING_ROLE_ID = 1535727112240242730
 
 # Channel the ghost ping is sent/deleted in
 GHOST_PING_CHANNEL_ID = 1535727447914451004
@@ -93,10 +100,31 @@ def safe_name(name: str) -> str:
 # =========================================================
 @bot.event
 async def on_ready():
-    bot.add_view(TicketPanelView())  # persistent view for the ticket panel
+    bot.add_view(TicketOnlyView())  # persistent view for the !panel ticket panel
+    bot.add_view(SupportOnlyView())  # persistent view for the !support panel
     bot.add_view(CloseTicketView())  # persistent view for the close button
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("Bot is ready.")
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """Ghost ping the new member in the ghost ping channel, then DM them."""
+    channel = member.guild.get_channel(GHOST_PING_CHANNEL_ID)
+    if channel is not None:
+        try:
+            ping_msg = await channel.send(f"{member.mention}")
+            await ping_msg.delete()
+        except discord.Forbidden:
+            pass
+
+    try:
+        await member.send(
+            f"👻 You got ghost pinged in **{member.guild.name}**!"
+        )
+    except discord.Forbidden:
+        # DMs closed, nothing more we can do
+        pass
 
 
 @bot.event
@@ -277,98 +305,105 @@ async def channel_cmd_error(ctx, error):
 
 
 # =========================================================
-# TICKET PANEL SYSTEM
+# TICKET / SUPPORT PANEL SYSTEM
 # =========================================================
-class TicketPanelView(discord.ui.View):
-    """Persistent view attached to the ticket panel embed."""
+async def create_ticket_channel(interaction: discord.Interaction, kind: str):
+    """kind is either 'ticket' or 'support'."""
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    guild = interaction.guild
+    user = interaction.user
+
+    if kind == "ticket":
+        category_id = TICKET_CATEGORY_ID
+        prefix = "ticket"
+        ticket_data["ticket_number"] += 1
+        number = ticket_data["ticket_number"]
+    else:
+        category_id = SUPPORT_CATEGORY_ID
+        prefix = "support"
+        ticket_data["support_number"] += 1
+        number = ticket_data["support_number"]
+
+    save_json(TICKET_DATA_FILE, ticket_data)
+
+    category = guild.get_channel(category_id)
+    if category is None or not isinstance(category, discord.CategoryChannel):
+        await interaction.followup.send(
+            "❌ Could not find the target category. Ask an admin to check the category ID.",
+            ephemeral=True,
+        )
+        return
+
+    channel_name = f"{prefix}-{safe_name(user.display_name)}-{number}"
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        user: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, manage_channels=True
+        ),
+    }
+
+    if STAFF_ROLE_ID:
+        staff_role = guild.get_role(STAFF_ROLE_ID)
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            )
+
+    new_channel = await guild.create_text_channel(
+        name=channel_name,
+        category=category,
+        overwrites=overwrites,
+        reason=f"{prefix.title()} opened by {user}",
+    )
+
+    open_embed = discord.Embed(
+        title=f"{'🎫 Ticket' if kind == 'ticket' else '🛠️ Support'} Opened",
+        description=(
+            f"Welcome {user.mention}!\n"
+            f"Please describe your {'order/issue' if kind == 'ticket' else 'question/issue'} "
+            f"and a staff member will be with you shortly."
+        ),
+        color=discord.Color.red() if kind == "ticket" else discord.Color.blue(),
+    )
+
+    ping_content = user.mention
+    if kind == "ticket" and TICKET_PING_ROLE_ID:
+        ping_content += f" <@&{TICKET_PING_ROLE_ID}>"
+
+    await new_channel.send(content=ping_content, embed=open_embed, view=CloseTicketView())
+
+    await interaction.followup.send(f"✅ Created {new_channel.mention}", ephemeral=True)
+
+
+class TicketOnlyView(discord.ui.View):
+    """Persistent view attached to the !panel embed - creates ticket channels."""
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.select(
-        placeholder="Choose ur reason",
-        custom_id="ticket_panel_select",
-        options=[
-            discord.SelectOption(
-                label="Open a Ticket",
-                description="General purchase / order ticket",
-                emoji="🎫",
-                value="ticket",
-            ),
-            discord.SelectOption(
-                label="Support",
-                description="Get help / support from staff",
-                emoji="🛠️",
-                value="support",
-            ),
-        ],
+    @discord.ui.button(
+        label="Create Ticket", style=discord.ButtonStyle.danger, custom_id="create_ticket_button", emoji="🎫"
     )
-    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        choice = select.values[0]
-        await interaction.response.defer(ephemeral=True, thinking=True)
+    async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await create_ticket_channel(interaction, "ticket")
 
-        guild = interaction.guild
-        user = interaction.user
 
-        if choice == "ticket":
-            category_id = TICKET_CATEGORY_ID
-            prefix = "ticket"
-            ticket_data["ticket_number"] += 1
-            number = ticket_data["ticket_number"]
-        else:
-            category_id = SUPPORT_CATEGORY_ID
-            prefix = "support"
-            ticket_data["support_number"] += 1
-            number = ticket_data["support_number"]
+class SupportOnlyView(discord.ui.View):
+    """Persistent view attached to the !support embed - creates support channels."""
 
-        save_json(TICKET_DATA_FILE, ticket_data)
+    def __init__(self):
+        super().__init__(timeout=None)
 
-        category = guild.get_channel(category_id)
-        if category is None or not isinstance(category, discord.CategoryChannel):
-            await interaction.followup.send(
-                "❌ Could not find the target category. Ask an admin to check the category ID.",
-                ephemeral=True,
-            )
-            return
-
-        channel_name = f"{prefix}-{safe_name(user.display_name)}-{number}"
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            user: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, manage_channels=True
-            ),
-        }
-
-        if STAFF_ROLE_ID:
-            staff_role = guild.get_role(STAFF_ROLE_ID)
-            if staff_role:
-                overwrites[staff_role] = discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, read_message_history=True
-                )
-
-        new_channel = await guild.create_text_channel(
-            name=channel_name,
-            category=category,
-            overwrites=overwrites,
-            reason=f"{prefix.title()} opened by {user}",
-        )
-
-        open_embed = discord.Embed(
-            title=f"{'🎫 Ticket' if choice == 'ticket' else '🛠️ Support'} Opened",
-            description=(
-                f"Welcome {user.mention}!\n"
-                f"Please describe your {'order/issue' if choice == 'ticket' else 'question/issue'} "
-                f"and a staff member will be with you shortly."
-            ),
-            color=discord.Color.red() if choice == "ticket" else discord.Color.blue(),
-        )
-        await new_channel.send(content=user.mention, embed=open_embed, view=CloseTicketView())
-
-        await interaction.followup.send(f"✅ Created {new_channel.mention}", ephemeral=True)
+    @discord.ui.button(
+        label="Create Support", style=discord.ButtonStyle.primary, custom_id="create_support_button", emoji="🛠️"
+    )
+    async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await create_ticket_channel(interaction, "support")
 
 
 class CloseTicketView(discord.ui.View):
@@ -398,7 +433,7 @@ async def panel_cmd(ctx: commands.Context):
         title="🛒 Shop Tickets",
         description=(
             "Do you want to open a ticket to contact us?\n"
-            "**Choose the reason for your ticket below.**\n\n"
+            "**Click below to create your ticket.**\n\n"
             "**__Terms & Conditions__**\n"
             "• Payments are only via PayPal or LTC.\n"
             "• If you send money to the wrong address, no refund will be provided.\n"
@@ -409,7 +444,7 @@ async def panel_cmd(ctx: commands.Context):
         ),
         color=discord.Color.dark_red(),
     )
-    await ctx.send(embed=embed, view=TicketPanelView())
+    await ctx.send(embed=embed, view=TicketOnlyView())
 
 
 @panel_cmd.error
@@ -418,47 +453,25 @@ async def panel_cmd_error(ctx, error):
         await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
 
 
-# =========================================================
-# +ghostping COMMAND
-# =========================================================
-@bot.command(name="ghostping")
-@commands.has_permissions(manage_messages=True)
-async def ghostping_cmd(ctx: commands.Context, member: discord.Member):
-    """
-    Usage: +ghostping @user
-    Pings the user in the ghost ping channel, deletes it instantly,
-    then DMs them letting them know they got ghost pinged.
-    """
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        pass
-
-    channel = ctx.guild.get_channel(GHOST_PING_CHANNEL_ID)
-    if channel is None:
-        await ctx.send("❌ Ghost ping channel not found.", delete_after=5)
-        return
-
-    ping_msg = await channel.send(f"{member.mention}")
-    await ping_msg.delete()
-
-    try:
-        await member.send(
-            f"👻 You got ghost pinged in **{ctx.guild.name}**, in {channel.mention}!"
-        )
-    except discord.Forbidden:
-        # DMs closed, nothing more we can do
-        pass
+@bot.command(name="support")
+@commands.has_permissions(administrator=True)
+async def support_cmd(ctx: commands.Context):
+    """Posts the support panel in the current channel."""
+    embed = discord.Embed(
+        title="🛠️ Support",
+        description=(
+            "Need help or have a question?\n"
+            "**Click below to open a support channel** and a staff member will assist you."
+        ),
+        color=discord.Color.blue(),
+    )
+    await ctx.send(embed=embed, view=SupportOnlyView())
 
 
-@ghostping_cmd.error
-async def ghostping_cmd_error(ctx, error):
+@support_cmd.error
+async def support_cmd_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ You need `Manage Messages` permission to use this.", delete_after=5)
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("❌ Couldn't find that member.", delete_after=5)
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("❌ Usage: `+ghostping @user`", delete_after=5)
+        await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
 
 
 # =========================================================
