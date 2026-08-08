@@ -7,6 +7,8 @@ Features:
   !channel               -> turns the current channel into a Counting Channel (count to 1000)
   !panel                 -> posts a ticket-only panel (button -> creates a ticket-name-number channel)
   !support                -> posts a support-only panel (button -> creates a support-name-number channel)
+  !welcome                -> sets the current channel to receive "member joined" messages
+  !leave                  -> sets the current channel to receive "member left" messages
   Ghost ping on join     -> automatically ghost pings + DMs every new member, no command needed
 
 Requirements:
@@ -48,6 +50,7 @@ GHOST_PING_CHANNEL_ID = 1535727447914451004
 
 COUNTING_DATA_FILE = "counting_data.json"
 TICKET_DATA_FILE = "ticket_data.json"
+WELCOME_DATA_FILE = "welcome_data.json"
 COUNT_GOAL = 1000
 
 # =========================================================
@@ -86,6 +89,10 @@ counting_data = load_json(COUNTING_DATA_FILE, {})
 # { "ticket_number": 0, "support_number": 0 }
 ticket_data = load_json(TICKET_DATA_FILE, {"ticket_number": 0, "support_number": 0})
 
+# welcome_data structure:
+# { "welcome_channel_id": None, "leave_channel_id": None }
+welcome_data = load_json(WELCOME_DATA_FILE, {"welcome_channel_id": None, "leave_channel_id": None})
+
 
 def safe_name(name: str) -> str:
     """Make a string safe to use as part of a channel name."""
@@ -109,7 +116,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """Ghost ping the new member in the ghost ping channel, then DM them."""
+    """Ghost ping the new member in the ghost ping channel, DM them, and post a welcome message."""
     channel = member.guild.get_channel(GHOST_PING_CHANNEL_ID)
     if channel is not None:
         try:
@@ -125,6 +132,42 @@ async def on_member_join(member: discord.Member):
     except discord.Forbidden:
         # DMs closed, nothing more we can do
         pass
+
+    welcome_channel_id = welcome_data.get("welcome_channel_id")
+    if welcome_channel_id:
+        welcome_channel = member.guild.get_channel(welcome_channel_id)
+        if welcome_channel is not None:
+            embed = discord.Embed(
+                title="👋 Welcome!",
+                description=f"{member.mention} just joined **{member.guild.name}**!",
+                color=discord.Color.green(),
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text=f"Member #{member.guild.member_count}")
+            try:
+                await welcome_channel.send(embed=embed)
+            except discord.Forbidden:
+                pass
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """Post a leave message when a member leaves."""
+    leave_channel_id = welcome_data.get("leave_channel_id")
+    if leave_channel_id:
+        leave_channel = member.guild.get_channel(leave_channel_id)
+        if leave_channel is not None:
+            embed = discord.Embed(
+                title="👋 Goodbye",
+                description=f"**{member}** has left **{member.guild.name}**.",
+                color=discord.Color.dark_grey(),
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text=f"Member #{member.guild.member_count}")
+            try:
+                await leave_channel.send(embed=embed)
+            except discord.Forbidden:
+                pass
 
 
 @bot.event
@@ -300,6 +343,39 @@ async def channel_cmd(ctx: commands.Context):
 
 @channel_cmd.error
 async def channel_cmd_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
+
+
+# =========================================================
+# !welcome / !leave COMMANDS
+# =========================================================
+@bot.command(name="welcome")
+@commands.has_permissions(administrator=True)
+async def welcome_cmd(ctx: commands.Context):
+    """Sets the current channel as the welcome (join) message channel."""
+    welcome_data["welcome_channel_id"] = ctx.channel.id
+    save_json(WELCOME_DATA_FILE, welcome_data)
+    await ctx.send(f"✅ Welcome messages will now be sent in {ctx.channel.mention}.")
+
+
+@welcome_cmd.error
+async def welcome_cmd_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
+
+
+@bot.command(name="leave")
+@commands.has_permissions(administrator=True)
+async def leave_cmd(ctx: commands.Context):
+    """Sets the current channel as the leave message channel."""
+    welcome_data["leave_channel_id"] = ctx.channel.id
+    save_json(WELCOME_DATA_FILE, welcome_data)
+    await ctx.send(f"✅ Leave messages will now be sent in {ctx.channel.mention}.")
+
+
+@leave_cmd.error
+async def leave_cmd_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
 
