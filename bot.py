@@ -475,6 +475,49 @@ async def support_cmd_error(ctx, error):
 
 
 # =========================================================
+# +dm COMMAND
+# =========================================================
+@bot.command(name="dm")
+@commands.has_permissions(administrator=True)
+async def dm_cmd(ctx: commands.Context, role: discord.Role, *, message: str):
+    """
+    Usage: +dm @role <message>
+    DMs every member who has the given role.
+    """
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        pass
+
+    status_msg = await ctx.send(f"📨 Sending DMs to **{len(role.members)}** members with {role.mention}...")
+
+    sent = 0
+    failed = 0
+    for member in role.members:
+        if member.bot:
+            continue
+        try:
+            await member.send(message)
+            sent += 1
+        except discord.Forbidden:
+            failed += 1
+
+    await status_msg.edit(
+        content=f"✅ Done. Sent to **{sent}** member(s). Failed (DMs closed): **{failed}**."
+    )
+
+
+@dm_cmd.error
+async def dm_cmd_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need `Administrator` permission to use this.", delete_after=5)
+    elif isinstance(error, commands.RoleNotFound):
+        await ctx.send("❌ Couldn't find that role.", delete_after=5)
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Usage: `+dm @role <message>`", delete_after=5)
+
+
+# =========================================================
 # RUN
 # =========================================================
 if __name__ == "__main__":
